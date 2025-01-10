@@ -1,0 +1,8 @@
+# Use the course base Docker image
+FROM risserlin/bcb420-base-image:winter2025-arm64
+
+# Install required R libraries
+# First, install BiocManager so that we can install packages from Bioconductor.
+RUN R -e "if (!requireNamespace('BiocManager', quietly = TRUE)) install.packages('BiocManager')" \
+    && R -e "BiocManager::install(c('DESeq2', 'enrichplot'))" \
+    && R -e "install.packages(c('pheatmap'), repos='http://cran.us.r-project.org')" 
