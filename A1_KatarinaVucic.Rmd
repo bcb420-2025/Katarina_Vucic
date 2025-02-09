@@ -1,0 +1,82 @@
+---
+title: "Title"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+  bibliographys: references.bib
+---
+
+# Introduction Section
+
+Package installation and imports:
+```{r, message=FALSE, warning=FALSE}
+library(GEOquery)
+library(kableExtra)
+```
+
+Introduce Paper and dataset. we begin by improting.
+
+```{r, message=FALSE}
+data_set_geoid <- "GSE264108"
+gse <- getGEO(data_set_geoid, GSEMatrix = FALSE)
+gse@header$summary
+```
+
+There are two datasets assosciated with this paper, raw counts and normalized counts. We will be doing the normalization from scratch so we will be using the raw counts.
+
+```{r, message=FALSE}
+sfilenames <- getGEOSuppFiles(data_set_geoid, fetch_files = FALSE)
+
+data_filename <- sfilenames$fname[1]
+
+download_dir <- file.path(getwd())
+
+if(!file.exists(file.path(download_dir,data_set_geoid, data_filename))){
+  sfiles = getGEOSuppFiles(data_set_geoid,
+                           baseDir = download_dir, 
+                           fetch_files = TRUE)
+}
+
+tnbc_data <- read.table(
+  file.path(download_dir,data_set_geoid,data_filename),
+  header=TRUE,
+  sep="\t",
+  check.names=TRUE)
+dim(tnbc_data)
+
+```
+
+
+```{r}
+colnames(tnbc_data)
+```
+
+```{r}
+list_of_samples <- gse@gsms
+samples_type <- do.call(rbind, 
+                        lapply(list_of_samples, FUN=function(x){
+                          c(x@header$title,
+                            x@header$characteristics_ch1,
+                            x@header$treatment_protocol_ch1,
+                            x@header$source_name_ch1)}))
+samples_df <- as.data.frame(samples_type, stringsAsFactors = FALSE)
+colnames(samples_df) <- c("sample", "sampleCondition", "cellType", "diseaseState", "treatmentProtocol", "sampleType")
+```
+
+```{r}
+samples_df[,'sample'] <- gsub(samples_df[,'sample'],
+                                pattern = "Neutrophils ",
+                                replacement = "")
+samples_df[,'sampleCondition'] <- gsub(samples_df[,'sampleCondition'],
+                                             pattern = "tissue: ",
+                                             replacement = "")
+samples_df[,'cellType'] <- gsub(samples_df[,'cellType'],
+                                       pattern = "cell type: ",
+                                       replacement = "")
+samples_df[,'diseaseState'] <- gsub(samples_df[,'diseaseState'],
+                                    pattern = "disease state: ",
+                                    replacement = "")
+
+samples_df
+```
