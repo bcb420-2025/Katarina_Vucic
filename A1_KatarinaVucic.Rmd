@@ -7,17 +7,22 @@ output:
   bibliographys: references.bib
 ---
 
-# Introduction Section
+Triple-Negative Breast Cancer (TNBC) is a particulary aggressive breast cancer with a high mortality rate. To investigate the immune response in TNBC patients, ___ et. al performed a bulk RNA-seq experiment designed to identify the differences in the expression of immune-cell genes between TNBC and healthy pateints. 
 
-Package installation and imports:
-```{r, message=FALSE, warning=FALSE}
+In this analysis, we continue the work of ___ et. al by examining their sequencing results to identify immune-cell specific expression in TNBC patients.
+
+# Dataset Import
+
+We begin our analysis by importing relevant packages for cleaning and analysis.
+```{r, message=FALSE, warning=FALSE, error=FALSE, results='hide'}
 library(GEOquery)
 library(edgeR)
 library(ggplot2)
 library(reshape2)
 ```
 
-Introduce Paper and dataset. we begin by improting.
+
+The authors conducted a bulk RNA-sequencing experiment involving... They stored their results in GEO with accession number `GSE264108`. We begin by retrieving the dataset. The summary of the experiment we are accessing is detailed below.
 
 ```{r, message=FALSE}
 data_set_geoid <- "GSE264108"
@@ -25,7 +30,7 @@ gse <- getGEO(data_set_geoid, GSEMatrix = FALSE)
 gse@header$summary
 ```
 
-There are two datasets assosciated with this paper, raw counts and normalized counts. We will be doing the normalization from scratch so we will be using the raw counts.
+There are two data sets associated with this paper, raw counts and normalized counts. We will be using the raw counts, as we will be doing the normalization from scratch. If the file is downloaded already, the following code will simply import it from your system.
 
 ```{r, message=FALSE}
 sfilenames <- getGEOSuppFiles(data_set_geoid, fetch_files = FALSE)
@@ -49,10 +54,21 @@ dim(tnbc_data)
 
 ```
 
+This dataset has 9048 immune-cell genes.
+
+
+# Dataset Cleaning
+
+In order to better understand the data we are working with, we will begin by cleaning up the table as it is now. The columns in our data can be seen below.
 
 ```{r}
-colnames(tnbc_data)
+print(colnames(tnbc_data))
 ```
+
+There are 14 samples, as well as meta-data for each gene in the data set. To improve our analysis, we split this data into 2 tables, one for the actual read counts and the other for the gene meta-data. 
+
+First, we pull out the sample metadata so that we can map each sample to a more readable descriptor.
+
 
 ```{r}
 list_of_sample <- gse@gsms
@@ -60,12 +76,13 @@ sample_type <- do.call(rbind,
                         lapply(list_of_sample, FUN=function(x){
                           c(x@header$title,
                             x@header$characteristics_ch1,
-                            x@header$treatment_protocol_ch1,
-                            x@header$source_name_ch1)}))
+                            x@header$treatment_protocol_ch1)}))
 sample_df <- as.data.frame(sample_type, stringsAsFactors = FALSE)
-colnames(sample_df) <- c("sample", "sampleCondition", "cellType", "diseaseState", "treatmentProtocol", "sampleType")
+colnames(sample_df) <- c("sample", "sampleCondition", "cellType", "diseaseState", "treatmentProtocol")
 ```
 
+
+Now, we clean up the dataset so that it is more readable. 
 ```{r}
 sample_df[,'sample'] <- gsub(sample_df[,'sample'],
                                 pattern = "Neutrophils ",
@@ -84,16 +101,22 @@ sample_df
 ```
 
 
+Next, we map our samples back to the read count dataframe so that we can use the accessions more easily. 
 
 ```{r}
 geo_accessions <- sapply(list_of_sample, function(x) x@header$geo_accession)
 colnames(tnbc_data)[2:15] <- geo_accessions
 
 tnbc_df <- data.frame(tnbc_data)
+# need to average duplicates here
+# rownames(tnbc_df) <- tnbc_data$external_gene_id
 ```
 
+Now, we make our gene meta-data table so that we can access information for each gene. 
 
 ### Clean Data
+
+Now that our dataset is in a suitable format, we will clean the actual data residing in the dataset. First, we begin by analysing the distribution of the data. The 1st quantile is 0 for all samples, and the mean values are very low, implying we have quite a few genes with low read counts.
 
 ```{r}
 sample_dt <- data.table::data.table(sample_df)
@@ -104,24 +127,29 @@ sample_dt[, (count = .N), by = sample_dt$diseaseState]
 summary(tnbc_data[ , 2:15])
 ```
 
+Since there are 7 of each disease state, we remove any gene that does not have expression in at least 7 of the samples.
 
 ```{r}
 min_num_samples <- 7
 data_matrix <- as.matrix(tnbc_data[ , 2:15])
 keep = rowSums(edgeR::cpm(data_matrix) >1) > min_num_samples
 filtered_tnbc_data = data_matrix[keep,]
-```
-
-
-```{r}
 dim(filtered_tnbc_data)
 ```
+
+This leaves us with 3693 genes that have enough expression to be analyzed downstream.
+
+To confirm we have removed most of our low read counts, we can reasses the distribution of the read coutns across samples.
 
 ```{r}
 summary(filtered_tnbc_data)
 ```
 
-```{r}
+The 1st quantile is no longer 0 and the median has increased significantly.
+
+The distribution of our data is now reaching the normal distribution (include plot for before as well).
+
+```{r, message=FALSE, warning=FALSE}
 data2plot <- log2(filtered_tnbc_data)
 boxplot(data2plot, xlab = "Samples", ylab = "log2 TPM",
   las = 2, cex = 0.5, cex.lab = 0.5,
@@ -154,14 +182,17 @@ counts_density <- apply(log2(filtered_tnbc_data), 2, density)
 
 ```
 
+Next, we investigate the effect of applying the Trimmed Mean of M-values (TMM) to further normalize our data.
+
 ```{r}
 d <- edgeR::DGEList(counts=filtered_tnbc_data, group=sample_dt$diseaseState)
 d <- calcNormFactors(d)
 normalized_counts <- cpm(d)
 ```
 
+By plotting we see that our data is further normalized.
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 data2plot <- log2(normalized_counts)
 boxplot(data2plot, xlab = "Samples", ylab = "log2 TPM",
   las = 2, cex = 0.5, cex.lab = 0.5,
@@ -193,9 +224,8 @@ counts_density <- apply(log2(normalized_counts), 2, density)
     merge = TRUE, bg = "gray90")
 ```
 
-
-Nice separation of disease states!
-```{r}
+Next we use an MDS plot to represent the distances of the data between samples. Here we see that there is a nice separation of data between disease states!
+```{r, message=FALSE, warning=FALSE}
 limma::plotMDS(d, labels=NULL, pch = 1,
                col = c("darkgreen","blue")[factor(sample_dt$diseaseState)])
 
@@ -205,20 +235,27 @@ legend("topright",
   bty = 'n', cex = 0.75)
 ```
 
-Dispersion
-```{r}
+We also calculate dispersion to assess how much the variance of our dataset deviates from the mean.
+```{r, message=FALSE, warning=FALSE}
 model_design <- model.matrix(~sample_dt$diseaseState)
 d <- estimateDisp(d, model_design)
 plotBCV(d,col.tagwise = "black",col.common = "red",)
 ```
 
-```{r}
+We find that there is a lot of variance, and use further plots to investigate.
+
+```{r, message=FALSE, warning=FALSE}
 plotMeanVar(d, show.raw.vars = TRUE,
 show.tagwise.vars=TRUE, NBline=TRUE,
 show.ave.raw.vars = TRUE,show.binned.common.disp.vars = TRUE)
 ```
 
-### Identifier Mapping
+We find our dataset does not follow the negative binomial model and includes a high-degree of variance.
+
+
+# Identifier Mapping
+
+(move this section up to the cleaning?)
 
 ```{r}
 
