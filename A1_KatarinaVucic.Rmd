@@ -4,12 +4,12 @@ output:
   html_document:
     toc: true
     toc_depth: 2
-  bibliographys: references.bib
+bibliography: references.bib
 ---
 
-Triple-Negative Breast Cancer (TNBC) is a particulary aggressive breast cancer with a high mortality rate. To investigate the immune response in TNBC patients, ___ et. al performed a bulk RNA-seq experiment designed to identify the differences in the expression of immune-cell genes between TNBC and healthy pateints. 
+Triple-Negative Breast Cancer (TNBC) is a particulary aggressive breast cancer with a high mortality rate. To investigate the immune response in TNBC patients, Bakker et. al performed a bulk RNA-seq experiment designed to identify the differences in the expression of immune-cell genes between TNBC and healthy pateints [@bakker2025]. 
 
-In this analysis, we continue the work of ___ et. al by examining their sequencing results to identify immune-cell specific expression in TNBC patients.
+In this analysis, we continue the work of Bakker et. al by examining their sequencing results to identify immune-cell specific expression in TNBC patients.
 
 # Dataset Import
 
@@ -22,7 +22,7 @@ library(reshape2)
 ```
 
 
-The authors conducted a bulk RNA-sequencing experiment involving... They stored their results in GEO with accession number `GSE264108`. We begin by retrieving the dataset. The summary of the experiment we are accessing is detailed below.
+The authors conducted a bulk RNA-sequencing experiment involving... neutrophils from seven patients with metastatic TNBC (mTNBC). Of the mTNBC pateints, one sample was chemotherapy-naïve, one was chemo-free for more than 1 year, and the remaining and 5 received recent chemotherapy. They also sequenced the neutrophils from seven healthy donors (HDs). The results are  stored in GEO with accession number `GSE264108`. We begin by retrieving the dataset, and examining the summary of the experiment we are accessing is detailed below.
 
 ```{r, message=FALSE}
 data_set_geoid <- "GSE264108"
@@ -30,28 +30,30 @@ gse <- getGEO(data_set_geoid, GSEMatrix = FALSE)
 gse@header$summary
 ```
 
-There are two data sets associated with this paper, raw counts and normalized counts. We will be using the raw counts, as we will be doing the normalization from scratch. If the file is downloaded already, the following code will simply import it from your system.
+There are two datasets associated with this paper, raw counts and normalized counts. We will be using the raw counts, as we will be doing the normalization from scratch. If the file is downloaded already, the following code will simply import it from your system.
 
 ```{r, message=FALSE}
+# retrieve the dataset filenames
 sfilenames <- getGEOSuppFiles(data_set_geoid, fetch_files = FALSE)
 
+# set dataset filename and working directory for retrieval
 data_filename <- sfilenames$fname[1]
-
 download_dir <- file.path(getwd())
 
+# check if the file exists before downloading
 if(!file.exists(file.path(download_dir,data_set_geoid, data_filename))){
   sfiles = getGEOSuppFiles(data_set_geoid,
                            baseDir = download_dir, 
                            fetch_files = TRUE)
 }
 
+# read in tab-separated data 
 tnbc_data <- read.table(
   file.path(download_dir,data_set_geoid,data_filename),
   header=TRUE,
   sep="\t",
   check.names=TRUE)
 dim(tnbc_data)
-
 ```
 
 This dataset has 9048 immune-cell genes.
@@ -71,12 +73,17 @@ First, we pull out the sample metadata so that we can map each sample to a more 
 
 
 ```{r}
+# retrieve the list of samples
 list_of_sample <- gse@gsms
+
+# pull out relevant metadata for each sample
 sample_type <- do.call(rbind, 
                         lapply(list_of_sample, FUN=function(x){
                           c(x@header$title,
                             x@header$characteristics_ch1,
                             x@header$treatment_protocol_ch1)}))
+
+# convert to a data frame
 sample_df <- as.data.frame(sample_type, stringsAsFactors = FALSE)
 colnames(sample_df) <- c("sample", "sampleCondition", "cellType", "diseaseState", "treatmentProtocol")
 ```
@@ -84,6 +91,7 @@ colnames(sample_df) <- c("sample", "sampleCondition", "cellType", "diseaseState"
 
 Now, we clean up the dataset so that it is more readable. 
 ```{r}
+# remove matching text to reduce redundancy
 sample_df[,'sample'] <- gsub(sample_df[,'sample'],
                                 pattern = "Neutrophils ",
                                 replacement = "")
@@ -104,13 +112,37 @@ sample_df
 Next, we map our samples back to the read count dataframe so that we can use the accessions more easily. 
 
 ```{r}
-geo_accessions <- sapply(list_of_sample, function(x) x@header$geo_accession)
+# pull out sample geo accessions
+geo_accessions <- sapply(list_of_sample, function(x)
+  x@header$geo_accession)
+
+# set the colomn names of our data
 colnames(tnbc_data)[2:15] <- geo_accessions
+
 
 tnbc_df <- data.frame(tnbc_data)
 # need to average duplicates here
 # rownames(tnbc_df) <- tnbc_data$external_gene_id
 ```
+
+Next, we must convert our gene identifiers to a popular format, HGNC symbols. Our dataset already stores the HGNC symbols in the `external_gene_id` column. 
+
+```{r}
+dup_genes <- tnbc_data[duplicated(tnbc_data$external_gene_id),]
+print(dup_genes[ , c(1, 20)])
+```
+
+```{r}
+print(unique(dup_genes$external_gene_id))
+```
+
+```{r}
+library(gprofiler2)
+gostres <- gost(query = dup_genes$ensembl_gene_id, organism = "hsapiens")
+
+head(gostres$result)
+```
+
 
 Now, we make our gene meta-data table so that we can access information for each gene. 
 
@@ -130,6 +162,7 @@ summary(tnbc_data[ , 2:15])
 Since there are 7 of each disease state, we remove any gene that does not have expression in at least 7 of the samples.
 
 ```{r}
+rownames(tnbc_data) <- tnbc_data$ensembl_gene_id
 min_num_samples <- 7
 data_matrix <- as.matrix(tnbc_data[ , 2:15])
 keep = rowSums(edgeR::cpm(data_matrix) >1) > min_num_samples
@@ -148,6 +181,8 @@ summary(filtered_tnbc_data)
 The 1st quantile is no longer 0 and the median has increased significantly.
 
 The distribution of our data is now reaching the normal distribution (include plot for before as well).
+
+
 
 ```{r, message=FALSE, warning=FALSE}
 data2plot <- log2(filtered_tnbc_data)
@@ -180,6 +215,36 @@ counts_density <- apply(log2(filtered_tnbc_data), 2, density)
     border ="blue", text.col = "green4",
     merge = TRUE, bg = "gray90")
 
+```
+
+## Identifier Mapping
+
+Until now, we have been using the ENSEMBL gene ids to map our data. While ENSEMBL is quite common for gene identifiers, most tools use the HGNC name for each gene instead. Our dataset already stores the HGNC symbols for each gene in the `external_gene_id` column. 
+
+We could have dealt with these genes earlier, however, there are some duplicated in the HGNC symbols so we must deal with them first before setting the gene symbols. We let filtering take care of some of them first, and now we can analyze the remaining duplicated genes.
+
+```{r}
+# identify duplicate gene identifiers in the tnbc_data
+dup_genes <- tnbc_data[duplicated(tnbc_data$external_gene_id),]
+
+# retrieve duplicate ids in filtered_tnbc_data
+filtered_dup_genes <- rownames(filtered_tnbc_data)[rownames(filtered_tnbc_data) %in% dup_genes$ensembl_gene_id]
+print(tnbc_data[filtered_dup_genes, c("ensembl_gene_id", "external_gene_id")])
+```
+
+```{r}
+filtered_tnbc_data[c("ENSG00000207034", "ENSG00000202019", "ENSG00000222852"), ]
+
+```
+
+Removing lowly-expressed genes has removed the duplicates for `LINC01481` and `Metazoa_SRP`, so we only have to deal with `Y_RNA`. We can analyze the expression values to see if there is a lot of variance between the three genes.
+
+```{r}
+library(ggplot2)
+library(tidyr)
+# extract expression data for each Y_RNA gene
+filtered_dup_tnbc_data <- data.frame(filtered_tnbc_data[c("ENSG00000207034", "ENSG00000202019", "ENSG00000222852"), ])
+print(filtered_dup_tnbc_data)
 ```
 
 Next, we investigate the effect of applying the Trimmed Mean of M-values (TMM) to further normalize our data.
@@ -253,14 +318,8 @@ show.ave.raw.vars = TRUE,show.binned.common.disp.vars = TRUE)
 We find our dataset does not follow the negative binomial model and includes a high-degree of variance.
 
 
-# Identifier Mapping
+# Discussion
 
-(move this section up to the cleaning?)
-
-```{r}
-
-
-```
 
 
 
