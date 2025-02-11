@@ -1,5 +1,7 @@
 ---
 title: "Data Cleaning and Processing of RNA-Seq for Triple-Negative Breast Cancer"
+author: "Katarina Vucic"
+data: "02/11/2025"
 output: 
   html_document:
     toc: true
@@ -13,9 +15,10 @@ output:
     code_folding: show
 bibliography: references.bib
 nocite: '@*'
+link-citations: true
 ---
 
-While cancer is one of the most studied diseases in the world, the immune landscape of cancer patients is largely uncharacterized. Previous research has demonstrated that tumours can affect the immune system's response, leading to variations in disease progression and treatment outcomes [@blomberg2018, @mcallister2014].
+While cancer is one of the most studied diseases in the world, the immune landscape of cancer patients is largely uncharacterized. Previous research has demonstrated that tumours can affect the immune system's response, leading to variations in disease progression and treatment outcomes [@blomberg2018; @mcallister2014].
 
 Neutrophils are a type of white blood cell that play a critical role in the body's immune response [@nci2019]. They respond to conditions in the body by releasing enzymes to destroy microorganisms [@nci2019]. Neutrophils also help to activate other immune cells, making them vital to the immune system [@nci2019]. 
 
@@ -39,7 +42,7 @@ library(tidyr)
 library(dplyr)
 ```
 
-The results for this experiment are stored in GEO with accession number `GSE264108`. We will retrieve the meta-data for this experiemnt and examine the summary of the experiment we are accessing.
+The results for this experiment are stored in the Gene Expression Omnibus (GEO) with accession number `GSE264108` [@barrett2012]. We will begin by retrieving the meta-data for this experiemnt and examine the summary of the experiment we are accessing.
 ```{r, message=FALSE, warning=FALSE}
 data_set_geoid <- "GSE264108"
 # retrieve data from GEO
@@ -176,13 +179,13 @@ data.frame(do.call(cbind, lapply(filtered_tnbc_data, summary)))
 
 *This code was inspired by the response by A5C1D2H2I1M1N2O1R2T1 to this Stack Overflow question [@chiam2015].*
 
-The 1st quantile is no longer 0 and the median has increased significantly.
+The 1st quantile is no longer 0 and the median has increased significantly, implying our low-count removal was successful.
 
 ---
 
 ## Identifier Mapping
 
-Until now, we have been using the ENSEMBL gene ids to map our data. While ENSEMBL is quite common for gene identifiers, most tools use the HGNC name for each gene instead. Our dataset already stores the HGNC symbols for each gene in the `external_gene_id` column. 
+Until now, we have been using the ENSEMBL gene ids to map our data. While ENSEMBL is quite common for gene identifiers, most tools use the HUGO Gene Nomenclature Committee (HGNC) name for each gene instead, since it is the standardized nomenclature for human genes [@seal2022]. Our dataset already stores the HGNC symbols for each gene in the `external_gene_id` column. 
 
 We could have dealt with these genes earlier, however, there are some duplicates in the HGNC symbols so we must deal with them first before setting the gene symbols. We let filtering take care of some of these lowly-expressed genes first, and now we can analyze the remaining duplicated genes.
 
@@ -216,6 +219,7 @@ ggplot(plot_filtered_dup_tnbc_data, aes(x = sample, y = expression, color = gene
   geom_point(size = 2) + 
   theme_minimal() +
   labs(title = "Y_RNA Gene Counts Across Samples",
+       caption = "The distribution of raw counts across samples in genes annotated with HGNC symbol Y_RNA.",
        x = "Sample",
        y = "Counts") +
   # angle text so sample is readable
@@ -246,7 +250,34 @@ Now our data is clean and ready for normalization!
 
 ---
 
+## Replicate Data 
+
+To confirm variability across genes, we will look at if there are any genes that have the same read counts. It is highly unlikely that genes will have the same read count since there is an infinite number of values for each read count value and there are 14 samples. Thus, replicate rows could imply some issue with the sequencing that may need to be removed.
+
+```{r}
+dup_read_counts <- clean_tnbc_data[duplicated(clean_tnbc_data),]
+
+dim(dup_read_counts)
+```
+
+The duplicate read count table is empty, meaning every gene has unique counts across samples.
+
+We will do the same to check if any of the samples are replicated.
+
+```{r}
+dup_samples <- clean_tnbc_data[ , duplicated(as.list(clean_tnbc_data))]
+
+dim(dup_samples)
+```
+
+The duplicate sample table is empty, meaning every sample has unique counts across genes
+
+---
+
 ## Quality Checks
+
+To ensure that the data is clean before we begin analyzing, we will assess if there are any non-numeric or null values.
+
 ```{r, message=FALSE, warning=FALSE}
 # ensure the dataset contains only numeric values
 data_numeric_check <- !all(sapply(clean_tnbc_data, is.numeric))
@@ -256,18 +287,17 @@ na_count <- sum(is.na(clean_tnbc_data))
 
 data.frame(
   check = c("Dataset contains non-numeric data", 
-            "Dataset cntains missing values (NAs)"),
+            "Dataset contains missing values (NAs)"),
   result = c(as.logical(data_numeric_check), as.logical(na_count)),
   stringsAsFactors = FALSE
 )
 ```
 
-Here is a snapshot of our data now.
+Our data has no non-numeric data or NAs. Here is a snapshot of our data now.
 
 ```{r, message=FALSE, warning=FALSE}
 clean_tnbc_data[1:5, ]
 ```
-
 
 Our data is now clean and ready for normalization!
 
@@ -317,12 +347,16 @@ plot_count_distribution(clean_tnbc_data, title = "Clean TNBC Data")
 
 *This code was modified from the lectures for BCB420: Computational Systems Biology [@isserlin2025].*
 
+---
+
+## Trimmed Mean of M-values (TMM) Normalization
+
 A common method for normalizing out technical variation is **Trimmed Mean of M-values (TMM)**, which is a sample-based normalization method based on the hypothesis that most genes are not differentially expressed [CITATION]. This method normalizes data by selecting a reference sample, calculating fold changes relative to it, and trimming out differentially expressed genes. The trimmed mean of fold changes and the total count of the sample are then used to scale the read counts [@evans2017].
 
 ```{r, message=FALSE, warning=FALSE}
 tnbc_dge_list <- edgeR::DGEList(counts=clean_tnbc_data, group=sample_df$diseaseState)
 tnbc_dge_list <- calcNormFactors(tnbc_dge_list)
-normalized_tnbc_counts <- cpm(tnbc_dge_list)
+normalized_tnbc_data <- data.frame(cpm(tnbc_dge_list))
 ```
 
 *This code was modified from the lectures for BCB420: Computational Systems Biology [@isserlin2025].*
@@ -330,10 +364,59 @@ normalized_tnbc_counts <- cpm(tnbc_dge_list)
 We can now re-inspect our data distribution to see that the data is more normalized. Normalized data should have more aligned means across samples, with the distribution more centered and resembling a normal distribution.
 
 ```{r, message=FALSE, warning=FALSE}
-plot_count_distribution(normalized_tnbc_counts, title = "Filtered TNBC Data")
+plot_count_distribution(normalized_tnbc_data, title = "Filtered TNBC Data")
 ```
 
 *This code was modified from the lectures for BCB420: Computational Systems Biology [@isserlin2025].*
+
+---
+
+## Outlier Analysis
+
+Now that our data is normalized, we can take a look at the number and range of outliers in our dataset. To do this we will use **Interquartile Range (IQR)**, to find the ranges of the lowest 25% and top 75% of our data [@soetewey2020].
+
+```{r}
+# calculate the interquartile range for each sample in the normalized data
+clean_quantile_1 <- apply(clean_tnbc_data, 2, quantile, 0.25)
+clean_quantile_3 <- apply(clean_tnbc_data, 2, quantile, 0.75)
+clean_iqr <- clean_quantile_3 - clean_quantile_1
+
+# calculate the lower and upper bounds for each sample in the normalized data
+clean_lower_bound <- clean_quantile_1 - (1.5 * clean_iqr)
+clean_upper_bound <- clean_quantile_3 + (1.5 * clean_iqr)
+
+# calculate the interquartile range for each sample in the normalized data
+norm_quantile_1 <- apply(normalized_tnbc_data, 2, quantile, 0.25)
+norm_quantile_3 <- apply(normalized_tnbc_data, 2, quantile, 0.75)
+norm_iqr <- norm_quantile_3 - norm_quantile_1
+
+# calculate the lower and upper bounds for each sample in the normalized data
+norm_lower_bound <- norm_quantile_1 - (1.5 * norm_iqr)
+norm_upper_bound <- norm_quantile_3 + (1.5 * norm_iqr)
+
+data.frame(rbind(clean_lower_bound, clean_upper_bound, norm_lower_bound, norm_upper_bound))
+```
+*This code was inspired by this Outliers detection in R tutorial [@soetewey2020].*
+
+We see that after normalization, the upper and lower bounds of the outliers became tighter, and the interquartile range is very similar across samples.
+
+```{r, message=FALSE, warning=FALSE}
+# check if data is within the outlier bounds for each sample
+clean_within_range <- clean_tnbc_data >= clean_lower_bound & clean_tnbc_data <= clean_upper_bound
+
+# sum the count of genes per sample
+clean_outlier_percent <- (dim(clean_tnbc_data)[1] - colSums(clean_within_range)) / dim(clean_tnbc_data)[1]
+
+# check if data is within the outlier bounds for each sample
+norm_within_range <- normalized_tnbc_data >= norm_lower_bound & normalized_tnbc_data <= norm_upper_bound
+
+# sum the count of genes per sample
+norm_outlier_percent <- (dim(normalized_tnbc_data)[1] - colSums(norm_within_range)) / dim(normalized_tnbc_data)[1]
+
+data.frame(rbind(clean_outlier_percent, norm_outlier_percent))
+```
+
+Roughly 14% of the data in each sample is an outlier.
 
 ---
 
@@ -380,17 +463,51 @@ show.tagwise.vars=TRUE, NBline=TRUE,
 show.ave.raw.vars = TRUE,show.binned.common.disp.vars = TRUE)
 ```
 
-From our analysis, we find that the dataset involves a high degree of variance, but after several rounds of correction it tends to follow the negative binomial model.
+From our analysis, we find that the dataset involves a high degree of variance, but after several rounds of correction it tends to follow the negative binomial model. 
 
 ```{r, message=FALSE, warning=FALSE}
-dim(clean_tnbc_data)
+dim(normalized_tnbc_data)
 ```
+
+The final coverage of our dataset is `3690` genes across `14` samples.
 
 ---
 
 # Discussion
 
-In the process of cleaning and normalizing the data, we are left with `3690` genes from the neutorphils of 7 mTNBC patients and 7 healthy donors. All ensembl ids were mapped to HGNC symbols by the original authors. There were 3 duplicate ensembl ids for `Y_RNA`, whos read counts were averaged since their general trend was similar across genes.
+**Why is the dataset of interest to you?**
+
+
+**What are the control and test conditions of the dataset?**
+
+This test group of this dataset are patients with mTNBC and the control group are healthy donors.
+
+**How many samples in each of the conditions of your dataset?**
+
+This dataset includes 7 mTNBC samples and 7 healthy donor samples.
+
+
+**Were there expression values that were not unique for specific genes? How did you handle these?**
+
+There were 3 duplicate Ensembl IDs for the HGNC symbol `Y_RNA`, and after analyzing their trend across samples we decided to average their counts.
+
+**Were there expression values that could not be mapped to current HUGO symbols?**
+
+All Ensembl IDs were mapped to HGNC symbols by the original authors.
+
+**Were there any outliers in your dataset? How were they handled in the originating paper? How many outliers were removed?**
+
+
+
+
+**How did you handle replicates?**
+
+There were no replicate genes or samples.
+
+**What is the final coverage of your dataset?**
+In the process of cleaning and normalizing the data, we are left with `3690` genes in our bulk RNA-sequencing experiment.
+
+In the process of cleaning and normalizing the data, we are left with `3690` genes in our bulk RNA-sequencing experiment. This dataset includes the neutrophils of 7 mTNBC patients in the test set and 7 healthy donors in the control group. All Ensembl IDs were mapped to HGNC symbols by the original authors. There were 3 duplicate Ensembl IDs for the HGNC symbol `Y_RNA`, and after analyzing their trend across samples we decided to average their counts. After normalization, there were 
 
 
 # References
