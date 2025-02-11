@@ -1,7 +1,8 @@
 ---
-title: "Data Cleaning and Processing of RNA-Seq for Triple-Negative Breast Cancer"
+title: "BCB420: Assignment 1"
+subtitle: "Data Cleaning and Processing of Bulk RNA-Sequencing Data of Neutrophils Affected by Triple-Negative Breast Cancer (TNBC)"
 author: "Katarina Vucic"
-data: "02/11/2025"
+date: "02/11/2025"
 output: 
   html_document:
     toc: true
@@ -12,11 +13,13 @@ output:
     highlight: tango
     fig_caption: true
     df_print: paged 
-    code_folding: show
-bibliography: references.bib
+    code_folding: hide
+bibliography: A1_references.bib
 nocite: '@*'
 link-citations: true
 ---
+
+# Introduction
 
 While cancer is one of the most studied diseases in the world, the immune landscape of cancer patients is largely uncharacterized. Previous research has demonstrated that tumours can affect the immune system's response, leading to variations in disease progression and treatment outcomes [@blomberg2018; @mcallister2014].
 
@@ -25,6 +28,7 @@ Neutrophils are a type of white blood cell that play a critical role in the body
 Triple-Negative Breast Cancer (TNBC) is a particularly aggressive breast cancer subtype with a high mortality rate [@acs2023]. To investigate immune response in TNBC patients, Bakker et. al performed a bulk RNA-seq experiment designed to identify the differences in the expression of genes in the neutrophils of TNBC patients and healthy donors [@bakker2025]. 
 
 In this analysis, we continue the work of Bakker et. al by examining their bulk RNA-sequencing results to investigate the expression patterns of genes in TNBC patients.
+
 
 ---
 
@@ -79,7 +83,7 @@ dim(tnbc_data)
 
 *This code was modified from the lectures for BCB420: Computational Systems Biology [@isserlin2025].*
 
-This dataset contains `9048` genes.
+This dataset contains `9048` genes. In the paper, the authors state that they removed genes with zero expression across all samples, so not all genes included in the bulk RNA-sequencing are included in this dataset [@bakker2025].  
 
 ---
 
@@ -90,6 +94,10 @@ In order to better understand the data we are working with, we will begin by cle
 ```{r, message=FALSE, warning=FALSE}
 head(tnbc_data)
 ```
+
+---
+
+## Table Cleaning
 
 There are 14 samples, as well as meta-data for each gene in the data set. To improve our analysis, we split this data into 2 tables, one for the sample meta-data and another for the read counts.
 
@@ -145,7 +153,7 @@ colnames(tnbc_data)[2:15] <- sample_df$sample
 
 ---
 
-## Data Cleaning
+## Removing Low Read Counts
 
 Now that our dataset is in a suitable format for reading, we will clean the actual read counts in the dataset. First, we begin by analyzing the distribution of the data.
 
@@ -157,7 +165,7 @@ data.frame(do.call(cbind, lapply(tnbc_data[, 2:15], summary)))
 
 The 1st quantile is 0 for all samples, and the mean values are very low, implying we have quite a few genes with low read counts.
 
-Since there are 7 of each disease state, we remove any gene that does not have expression in at least 7 of the samples.
+Low read counts are not always a bad thing, if there are low read counts for a gene in one condition but higher read counts in another it could indicate differential experession! However, low read counts in many samples could introduce noise when we want to calculate our differential expression [@isserlin2025]. Since there are 7 of each disease state, we will remove any gene that does not have expression in at least 7 of the samples. Choosing 7 allows us to keep the genes that possibly have low read counts in all of the samples in one condition and none of the other [@isserlin2025].
 
 ```{r, message=FALSE, warning=FALSE}
 rownames(tnbc_data) <- tnbc_data$ensembl_gene_id
@@ -194,39 +202,44 @@ We could have dealt with these genes earlier, however, there are some duplicates
 # identify duplicate gene identifiers in the tnbc_data
 dup_genes <- tnbc_data[duplicated(tnbc_data$external_gene_id),]
 
+# retrieve counts for duplicated data in the filtered dataframe
+dup_ensembls <- tnbc_data$ensembl_gene_id[tnbc_data$external_gene_id %in% dup_genes$external_gene_id]
+
 # retrieve duplicate ids in filtered_tnbc_data
-filtered_dup_genes <- rownames(filtered_tnbc_data)[rownames(filtered_tnbc_data) %in% dup_genes$ensembl_gene_id]
+filtered_dup_genes <- rownames(filtered_tnbc_data)[rownames(filtered_tnbc_data) %in% dup_ensembls]
+
+filtered_dup_tnbc_data <- filtered_tnbc_data[rownames(filtered_tnbc_data) %in% filtered_dup_genes, ]
 tnbc_data[filtered_dup_genes, c("ensembl_gene_id", "external_gene_id")]
+
 ```
 
-Removing lowly-expressed genes has removed the duplicates for `LINC01481` and `Metazoa_SRP`, so we only have to deal with `Y_RNA`. We can analyze the expression values to see if there is a lot of variance between the three genes.
+We have duplicate values for `Y_RNA`, `WDFY4`, `Metazoa_SRP`, `EMG1`, and `LINC01481`. Because of our read count filtering, `WDFY4`, `EMG1`, and `LINC01481` are no longer duplicates so we do not have to worry about them anymore. We can analyze the expression values of `Y_RNA` and `Metazoa_SRP`, to see if there is a lot of variance between the genes.
 
 ```{r, message=FALSE, warning=FALSE}
-# retrieve counts for duplicated data
-filtered_dup_tnbc_data <- data.frame(filtered_tnbc_data[rownames(filtered_tnbc_data) %in% c("ENSG00000207034", "ENSG00000202019", "ENSG00000222852"), ])
-
 # reshape the data from wide to long format for plotting
 plot_filtered_dup_tnbc_data <- filtered_dup_tnbc_data
 plot_filtered_dup_tnbc_data$gene <- rownames(filtered_dup_tnbc_data)
 plot_filtered_dup_tnbc_data <- plot_filtered_dup_tnbc_data %>%
   pivot_longer(cols = -gene, names_to = "sample", values_to = "expression")
+plot_filtered_dup_tnbc_data$hgnc <- tnbc_data$external_gene_id[match(plot_filtered_dup_tnbc_data$gene, tnbc_data$ensembl_gene_id)]
+plot_filtered_dup_tnbc_data <- plot_filtered_dup_tnbc_data[plot_filtered_dup_tnbc_data$hgnc %in% c("Y_RNA", "Metazoa_SRP"), ]
 
 # plot the expression data per sample for Y_RNA
-ggplot(plot_filtered_dup_tnbc_data, aes(x = sample, y = expression, color = gene, group = gene)) +
+ggplot(plot_filtered_dup_tnbc_data, aes(x = sample, y = expression, color = hgnc, group = gene)) +
   # draw line 
   geom_line(size = 1) + 
   # draw points
   geom_point(size = 2) + 
   theme_minimal() +
-  labs(title = "Y_RNA Gene Counts Across Samples",
-       caption = "The distribution of raw counts across samples in genes annotated with HGNC symbol Y_RNA.",
+  labs(title = "Duplicate Gene Counts Across Samples",
+       caption = "The distribution of raw counts across samples in genes annotated with HGNC symbol Y_RNA and Metazoa_SRP.",
        x = "Sample",
        y = "Counts") +
   # angle text so sample is readable
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-The `Y_RNA` genes generally follow a similar trend across samples, so we will take the mean of the expression value as the read counts for `Y_RNA`.
+The `Y_RNA` and `Metazoa_SRP` genes generally follow a similar trend across samples within their HGNC name, so we will take the mean of the expression value of the genes sharing the same HGNC name for the read counts for `Y_RNA` and `Metazoa_SRP.
 
 ```{r, message=FALSE, warning=FALSE}
 # create a column for HGNC symbols
@@ -301,6 +314,7 @@ clean_tnbc_data[1:5, ]
 
 Our data is now clean and ready for normalization!
 
+
 ---
 
 # Data Normalization
@@ -318,6 +332,7 @@ plot_count_distribution <- function(count_data, title = "RNASeq Samples") {
   #draw the median on each box plot
   abline(h = median(apply(data2plot, 2, median)),
     col = "green", lwd = 0.6, lty = "dashed")
+  mtext("Boxplot of TNBC RNASeq data for each sample", side = 1, line = 4, cex = 0.75)
   
   counts_density <- apply(log2(count_data), 2, density)
     #calculate the limits across all the samples
@@ -340,6 +355,7 @@ plot_count_distribution <- function(count_data, title = "RNASeq Samples") {
       col=cols, lty=ltys, cex=0.75,
       border ="blue", text.col = "green4",
       merge = TRUE, bg = "gray90")
+    mtext("Desnity plot of TNBC RNASeq data for each sample.", side = 1, line = 4, cex = 0.75)
 }
 
 plot_count_distribution(clean_tnbc_data, title = "Clean TNBC Data")
@@ -416,7 +432,13 @@ norm_outlier_percent <- (dim(normalized_tnbc_data)[1] - colSums(norm_within_rang
 data.frame(rbind(clean_outlier_percent, norm_outlier_percent))
 ```
 
-Roughly 14% of the data in each sample is an outlier.
+Roughly 14% of the data in each sample is an outlier. Let's take a look at the size of our dataset again.
+
+```{r, message=FALSE, warning=FALSE}
+dim(normalized_tnbc_data)
+```
+
+The final coverage of our dataset is `3690` genes across `14` samples.
 
 ---
 
@@ -435,9 +457,18 @@ legend("topright",
        legend=levels(factor(sample_df$diseaseState)),
   pch=c(1), col= c("darkgreen","blue"),title="Class",
   bty = 'n', cex = 0.75)
+
+mtext("MDS plot of TNBC RNASeq data coloured by disease state.", side = 1, line = 4, cex = 0.75)
 ```
 
 Here we see that there is a nice separation of data between disease states! This means there may be a good amount of differentially expressed genes across our disease states.
+
+
+---
+
+# Analysis 
+
+Now, let's take a look at the underlying distribution of the data again to see if there may be any issues when we perform differential expression.
 
 ---
 
@@ -452,62 +483,64 @@ By calculating dispersion, we can see the consistency of gene expression across 
 model_design <- model.matrix(~sample_df$diseaseState)
 tnbc_dispersion <- estimateDisp(tnbc_dge_list, model_design)
 plotBCV(tnbc_dispersion,col.tagwise = "black",col.common = "red",)
+mtext("Dispersion plot of TNBC RNASeq data.", side = 1, line = 4, cex = 0.75)
 ```
 
 We will now examine the overall distribution of variance across all genes. In particular, we want to examine whether the variance increases with the mean expression levels following the negative binomial distribution [@anders2013]. If the variance is unevenly distributed or significantly deviating from the negative binomial distribution, it may cause issues later when performing differential gene analysis.
 
 *This code was modified from the lectures for BCB420: Computational Systems Biology [@isserlin2025].*
 ```{r, message=FALSE, warning=FALSE}
-plotMeanVar(tnbc_dispersion, show.raw.vars = TRUE,
-show.tagwise.vars=TRUE, NBline=TRUE,
-show.ave.raw.vars = TRUE,show.binned.common.disp.vars = TRUE)
+plotMeanVar(tnbc_dispersion, show.raw.vars = TRUE, NBline=TRUE)
+mtext("Mean-Variance plot of TNBC RNASeq data with the Negative Binomial line in Blue.", side = 1, line = 4, cex = 0.75)
 ```
 
-From our analysis, we find that the dataset involves a high degree of variance, but after several rounds of correction it tends to follow the negative binomial model. 
+From our analysis, we find that the dataset involves a high degree of variance, but it tends to follow the negative binomial model, which is needed for differential expression downstream with edgeR [@edgeR]. 
 
-```{r, message=FALSE, warning=FALSE}
-dim(normalized_tnbc_data)
-```
 
-The final coverage of our dataset is `3690` genes across `14` samples.
+---
+
+# Conclusion
+
+In the process of cleaning and normalizing the data, we are left with `3690` genes in our bulk RNA-sequencing experiment. This dataset includes the neutrophils of 7 mTNBC patients in the test set and 7 healthy donors in the control group. All Ensembl IDs were mapped to HGNC symbols by the original authors. There were 3 duplicate Ensembl IDs for the HGNC symbol `Y_RNA`, and after analyzing their trend across samples we decided to average their counts. The quality checking showed that the data is clean with no missing or weird values. To normalize the data, we used TMM normalization to reduce technical noise. Using the the MDS plot, we see that our samples group nicely by disease state. The final coverage of our dataset is 3690 genes across 14 samples.
+
 
 ---
 
 # Discussion
 
-**Why is the dataset of interest to you?**
+The following contains a guide to the discussion questions for A1. Clicking on the question links back to the section where the analysis was performed, and a brief answer is provided for easy access.
 
+[**Why is the dataset of interest to you?**](#discussion)
 
-**What are the control and test conditions of the dataset?**
+This area of research is particularly meaningful to me because cancer research was the first field I wanted to enter as a child, and it is still one of the most interesting fields I have done research in. I chose this paper on Triple Negative Breast Cancer in specific because it is a very aggressive subtype with low mortality, meaning there is a lot of recent work done in the field. TNBC is also a primary focus in the lab I am working in, and although it is not my area of research I hear quite a bit about it in journal club. I wanted to choose something outside of the standard tumour sequencing areas, and I thought examining the neutrophils in the blood was an interesting direction I have not heard much about!
+
+[**What are the control and test conditions of the dataset?**](#introduction)
 
 This test group of this dataset are patients with mTNBC and the control group are healthy donors.
 
-**How many samples in each of the conditions of your dataset?**
+[**How many samples in each of the conditions of your dataset?**](#introduction)
 
 This dataset includes 7 mTNBC samples and 7 healthy donor samples.
 
+[**Were there expression values that were not unique for specific genes? How did you handle these?**](#identifier-mapping)
 
-**Were there expression values that were not unique for specific genes? How did you handle these?**
+There were 3 duplicate Ensembl IDs for the HGNC symbol `Y_RNA` and 2 for the Ensembl ID `Metazoa_SRP`, and after analyzing their trend across samples we decided to average their counts.
 
-There were 3 duplicate Ensembl IDs for the HGNC symbol `Y_RNA`, and after analyzing their trend across samples we decided to average their counts.
-
-**Were there expression values that could not be mapped to current HUGO symbols?**
+[**Were there expression values that could not be mapped to current HUGO symbols?**](#identifier-mapping)
 
 All Ensembl IDs were mapped to HGNC symbols by the original authors.
 
-**Were there any outliers in your dataset? How were they handled in the originating paper? How many outliers were removed?**
+[**Were there any outliers in your dataset? How were they handled in the originating paper? How many outliers were removed?**](#outlier-analysis)
 
+The original paper does not mention handling outliers. Since this dataset is smaller than the full human genome, it is very possible that they filtered out the outliers first. We did not remove any outliers, instead we applied TMM normalization to reduce their affect on the downstream analysis
 
+[**How did you handle replicates?**](#replicate-data)
 
+There were no replicate genes or samples, although I did check for them in the data.
 
-**How did you handle replicates?**
+[**What is the final coverage of your dataset?**](#conclusion)
 
-There were no replicate genes or samples.
-
-**What is the final coverage of your dataset?**
-In the process of cleaning and normalizing the data, we are left with `3690` genes in our bulk RNA-sequencing experiment.
-
-In the process of cleaning and normalizing the data, we are left with `3690` genes in our bulk RNA-sequencing experiment. This dataset includes the neutrophils of 7 mTNBC patients in the test set and 7 healthy donors in the control group. All Ensembl IDs were mapped to HGNC symbols by the original authors. There were 3 duplicate Ensembl IDs for the HGNC symbol `Y_RNA`, and after analyzing their trend across samples we decided to average their counts. After normalization, there were 
+The final coverage of our dataset is `3690` genes across `14` samples.
 
 
 # References
