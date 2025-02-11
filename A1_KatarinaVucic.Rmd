@@ -21,22 +21,19 @@ link-citations: true
 
 # Introduction
 
-While cancer is one of the most studied diseases in the world, the immune landscape of cancer patients is largely uncharacterized. Previous research has demonstrated that tumours can affect the immune system's response, leading to variations in disease progression and treatment outcomes [@blomberg2018; @mcallister2014].
+While cancer is one of the most studied diseases in the world, the immune landscape of cancer patients is largely uncharacterized. Previous research has demonstrated that tumours can affect the immune system's response, leading to variations in disease progression and treatment outcomes [@blomberg2018; @mcallister2014]. Neutrophils are a type of white blood cell that play a critical role in the body's immune response [@nci2019]. They respond to conditions in the body by releasing enzymes to destroy microorganisms [@nci2019]. Neutrophils also help to activate other immune cells, making them vital to the immune system [@nci2019]. 
 
-Neutrophils are a type of white blood cell that play a critical role in the body's immune response [@nci2019]. They respond to conditions in the body by releasing enzymes to destroy microorganisms [@nci2019]. Neutrophils also help to activate other immune cells, making them vital to the immune system [@nci2019]. 
-
-Triple-Negative Breast Cancer (TNBC) is a particularly aggressive breast cancer subtype with a high mortality rate [@acs2023]. To investigate immune response in TNBC patients, Bakker et. al performed a bulk RNA-seq experiment designed to identify the differences in the expression of genes in the neutrophils of TNBC patients and healthy donors [@bakker2025]. 
-
-In this analysis, we continue the work of Bakker et. al by examining their bulk RNA-sequencing results to investigate the expression patterns of genes in TNBC patients.
+Triple-Negative Breast Cancer (TNBC) is a particularly aggressive breast cancer subtype with a high mortality rate [@acs2023]. To investigate immune response in TNBC patients, Bakker et. al performed a bulk RNA-seq experiment designed to identify the differences in the expression of genes in the neutrophils of TNBC patients and healthy donors [@bakker2025]. In this analysis, we continue the work of Bakker et. al by examining their bulk RNA-sequencing results to investigate the expression patterns of genes in TNBC patients.
 
 
 ---
 
-# Dataset Import
+# Dataset Retrieval
 
 Bakker et. al conducted a bulk RNA-sequencing experiment involving neutrophils from seven patients with metastatic TNBC (mTNBC). Of the mTNBC pateints, one sample was chemotherapy-naïve, one was chemo-free for more than 1 year, and the remaining 5 received recent chemotherapy [@bakker2025]. They also sequenced the neutrophils from seven healthy donors (HDs) for a control group [@bakker2025]. 
 
 We begin by importing relevant packages for our analysis. We will be using GEOquery [@geoquery] to retrieve the GEO data; edgeR [@edgeR] for normalization; ggplot2 [@ggplot2] for plotting; and reshape2 [@reshape2], tidyr [@tidyr], and dplyr [@dplyr] for data manipulation.
+
 ```{r, message=FALSE, warning=FALSE, error=FALSE, results='hide'}
 library(GEOquery)
 library(edgeR)
@@ -178,7 +175,7 @@ dim(filtered_tnbc_data)
 
 *This code was modified from the lectures for BCB420: Computational Systems Biology [@isserlin2025].*
 
-This leaves us with 3693 genes that have enough expression to be analyzed downstream. To confirm we have removed most of our low read counts, we can reasses the distribution of the read coutns across samples.
+This leaves us with 3693 genes that have enough expression to be analyzed downstream. To confirm we have removed most of our low read counts, we can reasses the distribution of the read counts across samples.
 
 
 ```{r, message=FALSE, warning=FALSE}
@@ -193,24 +190,25 @@ The 1st quantile is no longer 0 and the median has increased significantly, impl
 
 ## Identifier Mapping
 
-Until now, we have been using the ENSEMBL gene ids to map our data. While ENSEMBL is quite common for gene identifiers, most tools use the HUGO Gene Nomenclature Committee (HGNC) name for each gene instead, since it is the standardized nomenclature for human genes [@seal2022]. Our dataset already stores the HGNC symbols for each gene in the `external_gene_id` column. 
+Until now, we have been using the Ensembl gene ids to map our data. While Ensembl is quite common for gene identifiers, most tools use the HUGO Gene Nomenclature Committee (HGNC) name for each gene instead, since it is the standardized nomenclature for human genes [@seal2022]. Our dataset already stores the HGNC symbols for each gene in the `external_gene_id` column. 
 
 We could have dealt with these genes earlier, however, there are some duplicates in the HGNC symbols so we must deal with them first before setting the gene symbols. We let filtering take care of some of these lowly-expressed genes first, and now we can analyze the remaining duplicated genes.
 
 
 ```{r, message=FALSE, warning=FALSE}
-# identify duplicate gene identifiers in the tnbc_data
+# identify duplicate hgnc identifiers in the tnbc_data
 dup_genes <- tnbc_data[duplicated(tnbc_data$external_gene_id),]
 
-# retrieve counts for duplicated data in the filtered dataframe
+# retrieve duplicate ensembls
+# we must re-filter with the dup_gene since duplicated() does not return the first occurence
 dup_ensembls <- tnbc_data$ensembl_gene_id[tnbc_data$external_gene_id %in% dup_genes$external_gene_id]
 
-# retrieve duplicate ids in filtered_tnbc_data
+# retrieve duplicate ensembl ids in filtered_tnbc_data
 filtered_dup_genes <- rownames(filtered_tnbc_data)[rownames(filtered_tnbc_data) %in% dup_ensembls]
 
+# retrieve duplicate filtered data
 filtered_dup_tnbc_data <- filtered_tnbc_data[rownames(filtered_tnbc_data) %in% filtered_dup_genes, ]
 tnbc_data[filtered_dup_genes, c("ensembl_gene_id", "external_gene_id")]
-
 ```
 
 We have duplicate values for `Y_RNA`, `WDFY4`, `Metazoa_SRP`, `EMG1`, and `LINC01481`. Because of our read count filtering, `WDFY4`, `EMG1`, and `LINC01481` are no longer duplicates so we do not have to worry about them anymore. We can analyze the expression values of `Y_RNA` and `Metazoa_SRP`, to see if there is a lot of variance between the genes.
@@ -239,7 +237,7 @@ ggplot(plot_filtered_dup_tnbc_data, aes(x = sample, y = expression, color = hgnc
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-The `Y_RNA` and `Metazoa_SRP` genes generally follow a similar trend across samples within their HGNC name, so we will take the mean of the expression value of the genes sharing the same HGNC name for the read counts for `Y_RNA` and `Metazoa_SRP.
+The `Y_RNA` and `Metazoa_SRP` genes generally follow a similar trend across samples within their HGNC name, so we will take the mean of the expression value of the genes sharing the same HGNC name for the read counts for `Y_RNA` and `Metazoa_SRP`.
 
 ```{r, message=FALSE, warning=FALSE}
 # create a column for HGNC symbols
@@ -319,7 +317,7 @@ Our data is now clean and ready for normalization!
 
 # Data Normalization
 
-In RNA-Seq analysis, the raw counts of gene expression can be affected by various factors that are not related to the biological differences we aim to study. These factors include technical variation from experimental procedures, sample preparation, and sequencing condition. **Normalization** is a process that aims to standardize these technical differences in order to reduce variability so that the observed differences in gene expression reflect *biological* variability instead of *technical* variability. For this analysis, we will be using the `edgeR` package [@edgeR].
+In RNA-Seq analysis, the raw counts of gene expression can be affected by various factors that are not related to the biological differences we aim to study. These factors include technical variation from experimental procedures, sample preparation, and sequencing condition [@isserlin2025]. **Normalization** is a process that aims to standardize these technical differences in order to reduce variability so that the observed differences in gene expression reflect *biological* variability instead of *technical* variability. For this analysis, we will be using the `edgeR` package [@edgeR].
 
 Let's take a look at the distribution of our data before we begin any normalization.
 
@@ -367,7 +365,7 @@ plot_count_distribution(clean_tnbc_data, title = "Clean TNBC Data")
 
 ## Trimmed Mean of M-values (TMM) Normalization
 
-A common method for normalizing out technical variation is **Trimmed Mean of M-values (TMM)**, which is a sample-based normalization method based on the hypothesis that most genes are not differentially expressed [CITATION]. This method normalizes data by selecting a reference sample, calculating fold changes relative to it, and trimming out differentially expressed genes. The trimmed mean of fold changes and the total count of the sample are then used to scale the read counts [@evans2017].
+A common method for normalizing out technical variation is **Trimmed Mean of M-values (TMM)**, which is a sample-based normalization method based on the hypothesis that most genes are not differentially expressed [@isserlin2025]. This method normalizes data by selecting a reference sample, calculating fold changes relative to it, and trimming out differentially expressed genes. The trimmed mean of fold changes and the total count of the sample are then used to scale the read counts [@evans2017].
 
 ```{r, message=FALSE, warning=FALSE}
 tnbc_dge_list <- edgeR::DGEList(counts=clean_tnbc_data, group=sample_df$diseaseState)
@@ -412,6 +410,7 @@ norm_upper_bound <- norm_quantile_3 + (1.5 * norm_iqr)
 
 data.frame(rbind(clean_lower_bound, clean_upper_bound, norm_lower_bound, norm_upper_bound))
 ```
+
 *This code was inspired by this Outliers detection in R tutorial [@soetewey2020].*
 
 We see that after normalization, the upper and lower bounds of the outliers became tighter, and the interquartile range is very similar across samples.
@@ -440,6 +439,12 @@ dim(normalized_tnbc_data)
 
 The final coverage of our dataset is `3690` genes across `14` samples.
 
+
+---
+
+# Analysis 
+
+Now, let's take a look at the underlying distribution of the data again to see if there may be any issues when we perform differential expression.
 ---
 
 ## Data Separation By Sample
@@ -448,7 +453,6 @@ A good way to visualize the relationship between samples is through a **Multidim
 
 In the MDS plot, samples that are similar in gene expression should cluster together, while samples that are very different should be placed farther apart.
 
-*This code was modified from the lectures for BCB420: Computational Systems Biology [@isserlin2025].*
 ```{r, message=FALSE, warning=FALSE}
 limma::plotMDS(tnbc_dge_list, labels=NULL, pch = 1,
                col = c("darkgreen","blue")[factor(sample_df$diseaseState)])
@@ -461,14 +465,9 @@ legend("topright",
 mtext("MDS plot of TNBC RNASeq data coloured by disease state.", side = 1, line = 4, cex = 0.75)
 ```
 
+*This code was modified from the lectures for BCB420: Computational Systems Biology [@isserlin2025].*
+
 Here we see that there is a nice separation of data between disease states! This means there may be a good amount of differentially expressed genes across our disease states.
-
-
----
-
-# Analysis 
-
-Now, let's take a look at the underlying distribution of the data again to see if there may be any issues when we perform differential expression.
 
 ---
 
@@ -476,9 +475,8 @@ Now, let's take a look at the underlying distribution of the data again to see i
 
 The **dispersion** of the dataset represents how much the variance deviates from the mean across the samples. In RNA-Seq data, we expect the variance to follow a negative binomial distribution, with the variance increasing with the mean expression level [@anders2013].
 
-By calculating dispersion, we can see the consistency of gene expression across samples. A large dispersion suggests that there is large variability in gene expression, which could either be biologically meaningful or technical variation.
+By calculating dispersion, we can see the consistency of gene expression across samples. A large dispersion suggests that there is large variability in gene expression, which could either be biologically meaningful or technical variation [@isserlin2025].
 
-*This code was modified from the lectures for BCB420: Computational Systems Biology [@isserlin2025].*
 ```{r, message=FALSE, warning=FALSE}
 model_design <- model.matrix(~sample_df$diseaseState)
 tnbc_dispersion <- estimateDisp(tnbc_dge_list, model_design)
@@ -486,13 +484,16 @@ plotBCV(tnbc_dispersion,col.tagwise = "black",col.common = "red",)
 mtext("Dispersion plot of TNBC RNASeq data.", side = 1, line = 4, cex = 0.75)
 ```
 
-We will now examine the overall distribution of variance across all genes. In particular, we want to examine whether the variance increases with the mean expression levels following the negative binomial distribution [@anders2013]. If the variance is unevenly distributed or significantly deviating from the negative binomial distribution, it may cause issues later when performing differential gene analysis.
-
 *This code was modified from the lectures for BCB420: Computational Systems Biology [@isserlin2025].*
+
+We will now examine the overall distribution of variance across all genes. In particular, we want to examine whether the variance increases with the mean expression levels following the negative binomial distribution [@anders2013]. If the variance is unevenly distributed or significantly deviating from the negative binomial distribution, it may cause issues later when performing differential gene analysis [@isserlin2025].
+
 ```{r, message=FALSE, warning=FALSE}
 plotMeanVar(tnbc_dispersion, show.raw.vars = TRUE, NBline=TRUE)
 mtext("Mean-Variance plot of TNBC RNASeq data with the Negative Binomial line in Blue.", side = 1, line = 4, cex = 0.75)
 ```
+
+*This code was modified from the lectures for BCB420: Computational Systems Biology [@isserlin2025].*
 
 From our analysis, we find that the dataset involves a high degree of variance, but it tends to follow the negative binomial model, which is needed for differential expression downstream with edgeR [@edgeR]. 
 
@@ -501,7 +502,7 @@ From our analysis, we find that the dataset involves a high degree of variance, 
 
 # Conclusion
 
-In the process of cleaning and normalizing the data, we are left with `3690` genes in our bulk RNA-sequencing experiment. This dataset includes the neutrophils of 7 mTNBC patients in the test set and 7 healthy donors in the control group. All Ensembl IDs were mapped to HGNC symbols by the original authors. There were 3 duplicate Ensembl IDs for the HGNC symbol `Y_RNA`, and after analyzing their trend across samples we decided to average their counts. The quality checking showed that the data is clean with no missing or weird values. To normalize the data, we used TMM normalization to reduce technical noise. Using the the MDS plot, we see that our samples group nicely by disease state. The final coverage of our dataset is 3690 genes across 14 samples.
+In the process of cleaning and normalizing the data, we are left with `3690` genes in our bulk RNA-sequencing experiment. This dataset includes the neutrophils of 7 mTNBC patients in the test set and 7 healthy donors in the control group. All Ensembl IDs were mapped to HGNC symbols by the original authors. Duplicate Ensembl IDs for the same HGNC symbol were examined, and after analyzing their trend across samples we decided to average their counts. The quality checking showed that the data is clean with no missing or non-numeric values. To normalize the data, we used TMM normalization to reduce technical noise. Using the the MDS plot, we see that our samples group nicely by disease state.
 
 
 ---
@@ -524,7 +525,7 @@ This dataset includes 7 mTNBC samples and 7 healthy donor samples.
 
 [**Were there expression values that were not unique for specific genes? How did you handle these?**](#identifier-mapping)
 
-There were 3 duplicate Ensembl IDs for the HGNC symbol `Y_RNA` and 2 for the Ensembl ID `Metazoa_SRP`, and after analyzing their trend across samples we decided to average their counts.
+There were 3 duplicate Ensembl IDs for the HGNC symbol `Y_RNA` and 2 for the Ensembl ID `Metazoa_SRP`, and after analyzing their trend across samples I decided to average their counts.
 
 [**Were there expression values that could not be mapped to current HUGO symbols?**](#identifier-mapping)
 
@@ -532,7 +533,7 @@ All Ensembl IDs were mapped to HGNC symbols by the original authors.
 
 [**Were there any outliers in your dataset? How were they handled in the originating paper? How many outliers were removed?**](#outlier-analysis)
 
-The original paper does not mention handling outliers. Since this dataset is smaller than the full human genome, it is very possible that they filtered out the outliers first. We did not remove any outliers, instead we applied TMM normalization to reduce their affect on the downstream analysis
+The original paper does not mention handling outliers. Since this dataset is smaller than the full human genome, it is very possible that they filtered out the outliers first. Instead of removing outliers, I applied TMM normalization to reduce their affect on the downstream analysis
 
 [**How did you handle replicates?**](#replicate-data)
 
@@ -540,7 +541,7 @@ There were no replicate genes or samples, although I did check for them in the d
 
 [**What is the final coverage of your dataset?**](#conclusion)
 
-The final coverage of our dataset is `3690` genes across `14` samples.
+The final coverage of the dataset is `3690` genes across `14` samples.
 
 
 # References
