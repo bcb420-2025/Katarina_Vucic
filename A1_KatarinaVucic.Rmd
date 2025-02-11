@@ -4,33 +4,76 @@ output:
   html_document:
     toc: true
     toc_depth: 2
+    number_sections: true
 bibliography: references.bib
 ---
 
-Triple-Negative Breast Cancer (TNBC) is a particulary aggressive breast cancer with a high mortality rate. To investigate the immune response in TNBC patients, Bakker et. al performed a bulk RNA-seq experiment designed to identify the differences in the expression of immune-cell genes between TNBC and healthy pateints [@bakker2025]. 
 
-In this analysis, we continue the work of Bakker et. al by examining their sequencing results to identify immune-cell specific expression in TNBC patients.
+```{r, echo=FALSE, message=FALSE, warning=FALSE, error=FALSE, results='hide'}
 
-# Dataset Import
+# NOTE: This section is meant to store function code for the rest of the notebook, and is not viewable in the HTML render. Please disregard this section and move to the markdown text below to access the analysis.
 
-We begin our analysis by importing relevant packages for cleaning and analysis.
-```{r, message=FALSE, warning=FALSE, error=FALSE, results='hide'}
 library(GEOquery)
 library(edgeR)
 library(ggplot2)
 library(reshape2)
+library(tidyr)
+library(dplyr)
+
+plot_count_distribution <- function(count_data, title = "RNASeq Samples") {
+  data2plot <- log2(count_data)
+  boxplot(data2plot, xlab = "Samples", ylab = "log2 TPM",
+    las = 2, cex = 0.5, cex.lab = 0.5,
+    cex.axis = 0.5, main = "RNASeq Samples")
+  #draw the median on each box plot
+  abline(h = median(apply(data2plot, 2, median)),
+    col = "green", lwd = 0.6, lty = "dashed")
+  
+  counts_density <- apply(log2(count_data), 2, density)
+    #calculate the limits across all the samples
+    xlim <- 0; ylim <- 0
+    for (i in 1:length(counts_density)) {
+      xlim <- range(c(xlim, counts_density[[i]]$x));
+      ylim <- range(c(ylim, counts_density[[i]]$y))
+    }
+    cols <- rainbow(length(counts_density))
+    ltys <- rep(1, length(counts_density))
+    #plot the first density plot to initialize the plot
+    plot(counts_density[[1]], xlim=xlim, ylim=ylim, type="n",
+      ylab="Smoothing density of log2-CPM",
+      main=paste(title, "- Density Plot"), cex.lab = 0.85)
+    #plot each line
+    for (i in 1:length(counts_density))
+      lines(counts_density[[i]], col=cols[i], lty=ltys[i])
+    #create legend
+    legend("topright", colnames(data2plot),
+      col=cols, lty=ltys, cex=0.75,
+      border ="blue", text.col = "green4",
+      merge = TRUE, bg = "gray90")
+}
+  
 ```
 
+While cancer is one of the most researched diseases in the world, the immune landscape of cancer patients is largely uncharacterized. Previous studies have shown that the way tumours affect the immune system response can lead to different disease progressions.
 
-The authors conducted a bulk RNA-sequencing experiment involving... neutrophils from seven patients with metastatic TNBC (mTNBC). Of the mTNBC pateints, one sample was chemotherapy-naïve, one was chemo-free for more than 1 year, and the remaining and 5 received recent chemotherapy. They also sequenced the neutrophils from seven healthy donors (HDs). The results are  stored in GEO with accession number `GSE264108`. We begin by retrieving the dataset, and examining the summary of the experiment we are accessing is detailed below.
+Neutrophils are white blood cells that respond to conditions in the body by releasing enzymes to destroy microorganisms. Neutrophils also promote the response of other immune cells, making them vital to the immune system. 
+
+Triple-Negative Breast Cancer (TNBC) is a particularly aggressive breast cancer with a high mortality rate. To investigate immune response in TNBC patients, Bakker et. al performed a bulk RNA-seq experiment designed to identify the differences in the expression of immune-cell genes between TNBC and healthy patients [@bakker2025]. 
+
+In this analysis, we continue the work of Bakker et. al by examining their bulk RNA-sequencing results to identify immune-cell specific expression in TNBC patients.
+
+# Dataset Import
+
+The authors conducted a bulk RNA-sequencing experiment involving neutrophils from seven patients with metastatic TNBC (mTNBC). Of the mTNBC pateints, one sample was chemotherapy-naïve, one was chemo-free for more than 1 year, and the remaining 5 received recent chemotherapy. They also sequenced the neutrophils from seven healthy donors (HDs) for a control group. The results are stored in GEO with accession number `GSE264108`. We begin by retrieving the dataset, and examining the summary of the experiment we are accessing is detailed below.
 
 ```{r, message=FALSE}
 data_set_geoid <- "GSE264108"
+# retrieve data from GEO
 gse <- getGEO(data_set_geoid, GSEMatrix = FALSE)
 gse@header$summary
 ```
 
-There are two datasets associated with this paper, raw counts and normalized counts. We will be using the raw counts, as we will be doing the normalization from scratch. If the file is downloaded already, the following code will simply import it from your system.
+There are two datasets associated with this paper, raw counts and normalized counts. We will be using the raw counts, since we will be doing the cleaning and normalization from scratch. If the file is downloaded already, the following code will simply import it from your system.
 
 ```{r, message=FALSE}
 # retrieve the dataset filenames
@@ -38,6 +81,7 @@ sfilenames <- getGEOSuppFiles(data_set_geoid, fetch_files = FALSE)
 
 # set dataset filename and working directory for retrieval
 data_filename <- sfilenames$fname[1]
+#data_filename <- "GSE264108_readcounts.txt.gz"
 download_dir <- file.path(getwd())
 
 # check if the file exists before downloading
@@ -56,7 +100,7 @@ tnbc_data <- read.table(
 dim(tnbc_data)
 ```
 
-This dataset has 9048 immune-cell genes.
+This dataset contains `r dim(tnbc_data)[1]` genes.
 
 
 # Dataset Cleaning
@@ -67,18 +111,17 @@ In order to better understand the data we are working with, we will begin by cle
 print(colnames(tnbc_data))
 ```
 
-There are 14 samples, as well as meta-data for each gene in the data set. To improve our analysis, we split this data into 2 tables, one for the actual read counts and the other for the gene meta-data. 
+There are 14 samples, as well as meta-data for each gene in the data set. To improve our analysis, we split this data into 2 tables, one for the sample meta-data and another for the read counts.
 
 First, we pull out the sample metadata so that we can map each sample to a more readable descriptor.
 
-
 ```{r}
 # retrieve the list of samples
-list_of_sample <- gse@gsms
+list_of_samples <- gse@gsms
 
 # pull out relevant metadata for each sample
 sample_type <- do.call(rbind, 
-                        lapply(list_of_sample, FUN=function(x){
+                        lapply(list_of_samples, FUN=function(x){
                           c(x@header$title,
                             x@header$characteristics_ch1,
                             x@header$treatment_protocol_ch1)}))
@@ -87,7 +130,6 @@ sample_type <- do.call(rbind,
 sample_df <- as.data.frame(sample_type, stringsAsFactors = FALSE)
 colnames(sample_df) <- c("sample", "sampleCondition", "cellType", "diseaseState", "treatmentProtocol")
 ```
-
 
 Now, we clean up the dataset so that it is more readable. 
 ```{r}
@@ -105,59 +147,26 @@ sample_df[,'diseaseState'] <- gsub(sample_df[,'diseaseState'],
                                     pattern = "disease state: ",
                                     replacement = "")
 
-sample_df
+print(sample_df)
 ```
 
 
 Next, we map our samples back to the read count dataframe so that we can use the accessions more easily. 
 
 ```{r}
-# pull out sample geo accessions
-geo_accessions <- sapply(list_of_sample, function(x)
-  x@header$geo_accession)
-
-# set the colomn names of our data
-colnames(tnbc_data)[2:15] <- geo_accessions
-
-
-tnbc_df <- data.frame(tnbc_data)
-# need to average duplicates here
-# rownames(tnbc_df) <- tnbc_data$external_gene_id
-```
-
-Next, we must convert our gene identifiers to a popular format, HGNC symbols. Our dataset already stores the HGNC symbols in the `external_gene_id` column. 
-
-```{r}
-dup_genes <- tnbc_data[duplicated(tnbc_data$external_gene_id),]
-print(dup_genes[ , c(1, 20)])
-```
-
-```{r}
-print(unique(dup_genes$external_gene_id))
-```
-
-```{r}
-library(gprofiler2)
-gostres <- gost(query = dup_genes$ensembl_gene_id, organism = "hsapiens")
-
-head(gostres$result)
+# set the colomn names of our data to the sample names
+colnames(tnbc_data)[2:15] <- sample_df$sample
 ```
 
 
-Now, we make our gene meta-data table so that we can access information for each gene. 
-
-### Clean Data
+### Data Cleaning
 
 Now that our dataset is in a suitable format, we will clean the actual data residing in the dataset. First, we begin by analysing the distribution of the data. The 1st quantile is 0 for all samples, and the mean values are very low, implying we have quite a few genes with low read counts.
 
 ```{r}
-sample_dt <- data.table::data.table(sample_df)
-sample_dt[, (count = .N), by = sample_dt$diseaseState]
-```
-
-```{r}
 summary(tnbc_data[ , 2:15])
 ```
+
 
 Since there are 7 of each disease state, we remove any gene that does not have expression in at least 7 of the samples.
 
@@ -166,13 +175,11 @@ rownames(tnbc_data) <- tnbc_data$ensembl_gene_id
 min_num_samples <- 7
 data_matrix <- as.matrix(tnbc_data[ , 2:15])
 keep = rowSums(edgeR::cpm(data_matrix) >1) > min_num_samples
-filtered_tnbc_data = data_matrix[keep,]
+filtered_tnbc_data = data.frame(data_matrix[keep,])
 dim(filtered_tnbc_data)
 ```
 
-This leaves us with 3693 genes that have enough expression to be analyzed downstream.
-
-To confirm we have removed most of our low read counts, we can reasses the distribution of the read coutns across samples.
+This leaves us with 3693 genes that have enough expression to be analyzed downstream. To confirm we have removed most of our low read counts, we can reasses the distribution of the read coutns across samples.
 
 ```{r}
 summary(filtered_tnbc_data)
@@ -180,41 +187,8 @@ summary(filtered_tnbc_data)
 
 The 1st quantile is no longer 0 and the median has increased significantly.
 
-The distribution of our data is now reaching the normal distribution (include plot for before as well).
-
-
-
 ```{r, message=FALSE, warning=FALSE}
-data2plot <- log2(filtered_tnbc_data)
-boxplot(data2plot, xlab = "Samples", ylab = "log2 TPM",
-  las = 2, cex = 0.5, cex.lab = 0.5,
-  cex.axis = 0.5, main = "RNASeq Samples")
-#draw the median on each box plot
-abline(h = median(apply(data2plot, 2, median)),
-  col = "green", lwd = 0.6, lty = "dashed")
-
-counts_density <- apply(log2(filtered_tnbc_data), 2, density)
-  #calculate the limits across all the samples
-  xlim <- 0; ylim <- 0
-  for (i in 1:length(counts_density)) {
-    xlim <- range(c(xlim, counts_density[[i]]$x));
-    ylim <- range(c(ylim, counts_density[[i]]$y))
-  }
-  cols <- rainbow(length(counts_density))
-  ltys <- rep(1, length(counts_density))
-  #plot the first density plot to initialize the plot
-  plot(counts_density[[1]], xlim=xlim, ylim=ylim, type="n",
-    ylab="Smoothing density of log2-CPM",
-    main="", cex.lab = 0.85)
-  #plot each line
-  for (i in 1:length(counts_density))
-    lines(counts_density[[i]], col=cols[i], lty=ltys[i])
-  #create legend
-  legend("topright", colnames(data2plot),
-    col=cols, lty=ltys, cex=0.75,
-    border ="blue", text.col = "green4",
-    merge = TRUE, bg = "gray90")
-
+plot_count_distribution(filtered_tnbc_data, title = "Filtered TNBC Data")
 ```
 
 ## Identifier Mapping
@@ -233,89 +207,134 @@ print(tnbc_data[filtered_dup_genes, c("ensembl_gene_id", "external_gene_id")])
 ```
 
 ```{r}
-filtered_tnbc_data[c("ENSG00000207034", "ENSG00000202019", "ENSG00000222852"), ]
-
+# retrieve counts for duplicated data
+filtered_dup_tnbc_data <- data.frame(filtered_tnbc_data[rownames(filtered_tnbc_data) %in% c("ENSG00000207034", "ENSG00000202019", "ENSG00000222852"), ])
 ```
 
 Removing lowly-expressed genes has removed the duplicates for `LINC01481` and `Metazoa_SRP`, so we only have to deal with `Y_RNA`. We can analyze the expression values to see if there is a lot of variance between the three genes.
 
 ```{r}
-library(ggplot2)
-library(tidyr)
-# extract expression data for each Y_RNA gene
-filtered_dup_tnbc_data <- data.frame(filtered_tnbc_data[c("ENSG00000207034", "ENSG00000202019", "ENSG00000222852"), ])
-print(filtered_dup_tnbc_data)
+plot_filtered_dup_tnbc_data <- filtered_dup_tnbc_data
+plot_filtered_dup_tnbc_data$gene <- rownames(filtered_dup_tnbc_data)
+
+# reshape the data from wide to long format
+plot_filtered_dup_tnbc_data <- plot_filtered_dup_tnbc_data %>%
+  pivot_longer(cols = -gene, names_to = "sample", values_to = "expression")
+
+# plot the expression data per sample for Y_RNA
+ggplot(plot_filtered_dup_tnbc_data, aes(x = sample, y = expression, color = gene, group = gene)) +
+  # draw line 
+  geom_line(size = 1) + 
+  # draw points
+  geom_point(size = 2) + 
+  theme_minimal() +
+  labs(title = "Y_RNA Gene Counts Across Samples",
+       x = "Sample",
+       y = "Counts") +
+  # angle text so sample is readable
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-Next, we investigate the effect of applying the Trimmed Mean of M-values (TMM) to further normalize our data.
+We can see here that they generally follow a similar trend across samples, and so we will take the mean of the expression value.
+
 
 ```{r}
-d <- edgeR::DGEList(counts=filtered_tnbc_data, group=sample_dt$diseaseState)
-d <- calcNormFactors(d)
-normalized_counts <- cpm(d)
+filtered_tnbc_data$hgnc <- tnbc_data$external_gene_id[match(rownames(filtered_tnbc_data), rownames(tnbc_data))]
+filtered_tnbc_data <- filtered_tnbc_data %>% 
+  dplyr::group_by(hgnc) %>% 
+  dplyr::summarise(dplyr::across(where(is.numeric), \(x) mean(x, na.rm = TRUE)))
+
+clean_tnbc_data <- data.frame(filtered_tnbc_data[ , !(colnames(filtered_tnbc_data) %in% c("hgnc"))])
+rownames(clean_tnbc_data) <- filtered_tnbc_data$hgnc
 ```
 
-By plotting we see that our data is further normalized.
+Now our data is clean and ready for normalization!
 
-```{r, message=FALSE, warning=FALSE}
-data2plot <- log2(normalized_counts)
-boxplot(data2plot, xlab = "Samples", ylab = "log2 TPM",
-  las = 2, cex = 0.5, cex.lab = 0.5,
-  cex.axis = 0.5, main = "RNASeq Samples")
-#draw the median on each box plot
-abline(h = median(apply(data2plot, 2, median)),
-  col = "green", lwd = 0.6, lty = "dashed")
 
-counts_density <- apply(log2(normalized_counts), 2, density)
-  #calculate the limits across all the samples
-  xlim <- 0; ylim <- 0
-  for (i in 1:length(counts_density)) {
-    xlim <- range(c(xlim, counts_density[[i]]$x));
-    ylim <- range(c(ylim, counts_density[[i]]$y))
-  }
-  cols <- rainbow(length(counts_density))
-  ltys <- rep(1, length(counts_density))
-  #plot the first density plot to initialize the plot
-  plot(counts_density[[1]], xlim=xlim, ylim=ylim, type="n",
-    ylab="Smoothing density of log2-CPM",
-    main="", cex.lab = 0.85)
-  #plot each line
-  for (i in 1:length(counts_density))
-    lines(counts_density[[i]], col=cols[i], lty=ltys[i])
-  #create legend
-  legend("topright", colnames(data2plot),
-    col=cols, lty=ltys, cex=0.75,
-    border ="blue", text.col = "green4",
-    merge = TRUE, bg = "gray90")
+## Quality Checks
+```{r}
+# ensure the dataset contains only numeric values
+data_numeric_check <- all(sapply(clean_tnbc_data, is.numeric))
+
+# count missing values (NAs) in the dataset
+na_count <- sum(is.na(clean_tnbc_data))
+
+# identify columns (samples) that contain only missing values
+na_cols <- colSums(is.na(clean_tnbc_data)) == nrow(clean_tnbc_data)
+
+cat("Quality Check Summary:\n")
+cat(" * Dataset contains only numeric data: ", data_numeric_check, "\n")
+cat(" * Total Missing Values (NAs):", na_count, "\n")
+cat(" * Samples with only NAs:", sum(na_cols), "\n")
 ```
 
-Next we use an MDS plot to represent the distances of the data between samples. Here we see that there is a nice separation of data between disease states!
+Here is a snapshot of our data now.
+
+```{r}
+print(clean_tnbc_data[1:5, 1:7])
+```
+
+
+Our data is now clean and ready for normalization!
+
+# Data Normalization
+
+In RNA-Seq analysis, the raw counts of gene expression can be affected by various factors that are not related to the biological differences we aim to study. These factors include technical variation from experimental procedures, sample preparation, and sequencing condition. **Normalization** is a process that aims to standardize these technical differences in order to reduce variability so that the observed differences in gene expression reflect *biological* variability instead of *technical* variability
+
+Let's take a look at the distribution of our data before we begin any normalization.
+
 ```{r, message=FALSE, warning=FALSE}
-limma::plotMDS(d, labels=NULL, pch = 1,
-               col = c("darkgreen","blue")[factor(sample_dt$diseaseState)])
+plot_count_distribution(clean_tnbc_data, title = "Clean TNBC Data")
+```
+
+A common method for normalizing out technical variation is **Trimmed Mean of M-values (TMM)**, which is a sample-based normalization method based on the hypothesis that most genes are not differentially expressed. 
+
+```{r}
+tnbc_dge_list <- edgeR::DGEList(counts=clean_tnbc_data, group=sample_df$diseaseState)
+tnbc_dge_list <- calcNormFactors(tnbc_dge_list)
+normalized_tnbc_counts <- cpm(tnbc_dge_list)
+```
+
+We can now re-inspect our data distribution to see that the data is more normalized. Normalized data should have more aligned means across samples, with the distribution more centered and resembling a normal distribution.
+
+```{r, message=FALSE, warning=FALSE}
+plot_count_distribution(normalized_tnbc_counts, title = "Filtered TNBC Data")
+```
+
+A good way to visualize the relationship between samples is through a **Multidimensional Scaling (MDS)** plot. This plot helps us assess the distances between samples based on their expression profiles. By applying MDS, we can check how well the samples are grouped by their biological characteristics, such as disease state.
+
+In the MDS plot, samples that are similar in gene expression should cluster together, while samples that are very different should be placed farther apart. A good normalization procedure should lead to a clearer separation of groups in the plot.
+```{r, message=FALSE, warning=FALSE}
+limma::plotMDS(tnbc_dge_list, labels=NULL, pch = 1,
+               col = c("darkgreen","blue")[factor(sample_df$diseaseState)])
 
 legend("topright", 
-       legend=levels(factor(sample_dt$diseaseState)),
+       legend=levels(factor(sample_df$diseaseState)),
   pch=c(1), col= c("darkgreen","blue"),title="Class",
   bty = 'n', cex = 0.75)
 ```
 
-We also calculate dispersion to assess how much the variance of our dataset deviates from the mean.
+Here we see that there is a nice separation of data between disease states! This means there may be a good amount of differentially expressed genes across our disease states.
+
+The **dispersion** of the dataset represents how much the variance deviates from the mean across the samples. In RNA-Seq data, we expect the variance to follow a negative binomial distribution, with the variance increasing with the mean expression level.
+
+By calculating dispersion, we can see the consistency of gene expression across samples. A large dispersion suggests that there is large variability in gene expression, which could either be biologically meaningful or an artifact of the normalization process.
 ```{r, message=FALSE, warning=FALSE}
-model_design <- model.matrix(~sample_dt$diseaseState)
-d <- estimateDisp(d, model_design)
-plotBCV(d,col.tagwise = "black",col.common = "red",)
+model_design <- model.matrix(~sample_df$diseaseState)
+tnbc_dispersion <- estimateDisp(tnbc_dge_list, model_design)
+plotBCV(tnbc_dispersion,col.tagwise = "black",col.common = "red",)
 ```
 
 We find that there is a lot of variance, and use further plots to investigate.
 
+After assessing the dispersion of the dataset, we will examine the overall distribution of variance across all genes. This allows us to assess whether the dataset follows the expected variance model and to identify any patterns of variability that might be influenced by technical or biological variance. In particular, we want to examine whether the variance increases with the mean expression levels, as is expected under the negative binomial distribution. If the variance is unevenly distributed or significantlt deviating from the negative binomial distribution, it may cause issues later when performing differential gene analysis.
 ```{r, message=FALSE, warning=FALSE}
-plotMeanVar(d, show.raw.vars = TRUE,
+plotMeanVar(tnbc_dispersion, show.raw.vars = TRUE,
 show.tagwise.vars=TRUE, NBline=TRUE,
 show.ave.raw.vars = TRUE,show.binned.common.disp.vars = TRUE)
 ```
 
-We find our dataset does not follow the negative binomial model and includes a high-degree of variance.
+From our analysis, we find that the dataset involves a high degree of variance and does not follow the negative binomial model.
 
 
 # Discussion
