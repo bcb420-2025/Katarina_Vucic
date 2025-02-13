@@ -445,6 +445,7 @@ The final coverage of our dataset is `3690` genes across `14` samples.
 # Analysis 
 
 Now, let's take a look at the underlying distribution of the data again to see if there may be any issues when we perform differential expression.
+
 ---
 
 ## Data Separation By Sample
