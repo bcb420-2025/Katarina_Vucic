@@ -32,3 +32,146 @@ Now, we will perform differential gene expression using `edgeR`, and conduct an 
 #TODO: flesh out intro and add more detail. maybe include some figures.
 
 ---
+
+
+We will begin by importing our normalized TNBC data. 
+
+```{r}
+normalized_tnbc_data <- read.csv("normalized_tnbc_data.csv")
+```
+
+```{r}
+rownames(normalized_tnbc_data) <- normalized_tnbc_data$X
+normalized_tnbc_data$X <- NULL
+```
+*This code was inspired by the response by Matthew Lundberg to this Stack Overflow question [].*
+(https://stackoverflow.com/questions/20643166/set-a-data-frame-column-as-the-index-of-r-data-frame-object)
+
+Let's take a look at the distribution of the data to confirm that it is in fact normalized.
+
+```{r}
+normalized_tnbc_data
+```
+
+```{r, message=FALSE, warning=FALSE}
+plot_count_distribution <- function(count_data, title = "RNASeq Samples") {
+  data2plot <- log2(count_data)
+  boxplot(data2plot, xlab = "Samples", ylab = "log2 TPM",
+    las = 2, cex = 0.5, cex.lab = 0.5,
+    cex.axis = 0.5, main = "RNASeq Samples")
+  #draw the median on each box plot
+  abline(h = median(apply(data2plot, 2, median)),
+    col = "green", lwd = 0.6, lty = "dashed")
+  mtext("Boxplot of TNBC RNASeq data for each sample", side = 1, line = 4, cex = 0.75)
+  
+  counts_density <- apply(log2(count_data), 2, density)
+    #calculate the limits across all the samples
+    xlim <- 0; ylim <- 0
+    for (i in 1:length(counts_density)) {
+      xlim <- range(c(xlim, counts_density[[i]]$x));
+      ylim <- range(c(ylim, counts_density[[i]]$y))
+    }
+    cols <- rainbow(length(counts_density))
+    ltys <- rep(1, length(counts_density))
+    #plot the first density plot to initialize the plot
+    plot(counts_density[[1]], xlim=xlim, ylim=ylim, type="n",
+      ylab="Smoothing density of log2-CPM",
+      main=paste(title, "- Density Plot"), cex.lab = 0.85)
+    #plot each line
+    for (i in 1:length(counts_density))
+      lines(counts_density[[i]], col=cols[i], lty=ltys[i])
+    #create legend
+    legend("topright", colnames(data2plot),
+      col=cols, lty=ltys, cex=0.75,
+      border ="blue", text.col = "green4",
+      merge = TRUE, bg = "gray90")
+    mtext("Desnity plot of TNBC RNASeq data for each sample.", side = 1, line = 4, cex = 0.75)
+}
+
+plot_count_distribution(normalized_tnbc_data, title = "Filtered TNBC Data")
+```
+
+*This code was modified from the lectures for BCB420: Computational Systems Biology [@isserlin2025].*
+
+Since our data has aligned means across samples, with the distribution resembling a normal distribution, we can conclude that our data is normalized.
+
+
+## Data Separation By Category
+
+#TODO: REWORD THIS 
+A good way to visualize the relationship between samples is through a **Multidimensional Scaling (MDS)** plot. This plot helps us assess the similarities between samples based on their expression profiles [@hout2013]. By applying MDS, we can check how well the samples are grouped by their biological characteristics, such as disease state [@hout2013].
+#TODO: REWORD THIS END
+
+We will test how well our dataset clusters across a few different states, including disease state, sample, patient, etc. 
+
+Lets load in the sample dataframe first.
+
+```{r}
+sample_info_data <- read.csv("sample_info_data.csv")
+```
+
+```{r}
+rownames(sample_info_data) <- sample_info_data$X
+sample_info_data$X <- NULL
+```
+*This code was inspired by the response by Matthew Lundberg to this Stack Overflow question [].*
+(https://stackoverflow.com/questions/20643166/set-a-data-frame-column-as-the-index-of-r-data-frame-object)
+
+
+```{r}
+sample_info_data
+```
+
+We will begin by assessing how well the samples separate by disease state.
+
+```{r, message=FALSE, warning=FALSE}
+limma::plotMDS(tnbc_dge_list, labels=NULL, pch = 1,
+               col = c("darkgreen","blue")[factor(sample_df$diseaseState)])
+
+legend("topright", 
+       legend=levels(factor(sample_df$diseaseState)),
+  pch=c(1), col= c("darkgreen","blue"),title="Class",
+  bty = 'n', cex = 0.75)
+
+mtext("MDS plot of TNBC RNASeq data coloured by disease state.", side = 1, line = 4, cex = 0.75)
+```
+
+There is a very clear separation of samples by disease state, indicating that this is a very predictive feature for our model. This is a good sign, considering our goal is characterizing the difference in disease state between healthy and TNBC samples!
+
+Ideally, we would have liked to look at how the samples separate in response to cancer stage and chemotherapy level, however, the authors did not include that information in the sample information. We will stick with disease state as our main factor for the model we will use for differential expression.
+
+# Computing Differential Expression
+
+```{r}
+model_design_pattern <- model.matrix(~ sample_df$diseaseState)
+```
+
+```{r}
+d <- DGEList(counts=normalized_tnbc_data, group=sample_df$diseaseState)
+d <- estimateDisp(d, model_design_pattern)
+fit <- glmQLFit(d, model_design_pattern)
+```
+
+```{r}
+qlf_disease_state <- glmQLFTest(fit, coef='sample_df$diseaseStateTriple-Negative Breast Cancer')
+qlf_output_hits <- topTags(qlf_disease_state, sort.by = "PValue", n = nrow(normalized_tnbc_data))
+```
+
+
+```{r}
+pass_threshold <- length(which(qlf_output_hits$table$PValue < 0.05))
+pass_correction <- length(which(qlf_output_hits$table$FDR < 0.05))
+
+print(pass_threshold)
+print(pass_correction)
+```
+
+
+```{r}
+pass_lighter_correction <- length(which(qlf_output_hits$table$FDR < 0.1))
+
+print(pass_lighter_correction)
+```
+
+572 genes have a p-value < 0.05 but only 2 of them pass correction with FDR < 0.05. Even more worrisome, only 13 pass a lighter correction with FDR < 0.01. 
+
