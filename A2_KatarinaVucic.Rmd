@@ -37,21 +37,35 @@ Now, we will perform differential gene expression using `edgeR`, and conduct an 
 We will begin by importing our normalized TNBC data. 
 
 ```{r}
-normalized_tnbc_data <- read.csv("normalized_tnbc_data.csv")
+if (!requireNamespace("ggrepel", quietly = TRUE)) {
+  install.packages("ggrepel")
+}
+
+library(edgeR)
+library(ComplexHeatmap)
+library(circlize)
+library(ggrepel)
+library(ggplot2)
 ```
 
 ```{r}
+# load in data from csv file
+normalized_tnbc_data <- read.csv("normalized_tnbc_data.csv")
+
+# reset index and remove the row
 rownames(normalized_tnbc_data) <- normalized_tnbc_data$X
 normalized_tnbc_data$X <- NULL
 ```
 *This code was inspired by the response by Matthew Lundberg to this Stack Overflow question [].*
 (https://stackoverflow.com/questions/20643166/set-a-data-frame-column-as-the-index-of-r-data-frame-object)
 
-Let's take a look at the distribution of the data to confirm that it is in fact normalized.
+As a reminder, our dataframe contains the nromalized read counts of 3690 genes for 14 samples.
 
 ```{r}
 normalized_tnbc_data
 ```
+
+Let's take a look at the distribution of the data to confirm that it is in fact normalized.
 
 ```{r, message=FALSE, warning=FALSE}
 plot_count_distribution <- function(count_data, title = "RNASeq Samples") {
@@ -93,43 +107,44 @@ plot_count_distribution(normalized_tnbc_data, title = "Filtered TNBC Data")
 
 *This code was modified from the lectures for BCB420: Computational Systems Biology [@isserlin2025].*
 
-Since our data has aligned means across samples, with the distribution resembling a normal distribution, we can conclude that our data is normalized.
+Since our data has aligned means across samples, with the distribution resembling a normal distribution, we can conclude that our data is normalized, as expected. 
 
-
-## Data Separation By Category
-
-#TODO: REWORD THIS 
-A good way to visualize the relationship between samples is through a **Multidimensional Scaling (MDS)** plot. This plot helps us assess the similarities between samples based on their expression profiles [@hout2013]. By applying MDS, we can check how well the samples are grouped by their biological characteristics, such as disease state [@hout2013].
-#TODO: REWORD THIS END
-
-We will test how well our dataset clusters across a few different states, including disease state, sample, patient, etc. 
-
-Lets load in the sample dataframe first.
+Lets load in the sample dataframe next.
 
 ```{r}
+# load in data from csv file
 sample_info_data <- read.csv("sample_info_data.csv")
-```
 
-```{r}
+# reset index and remove the row
 rownames(sample_info_data) <- sample_info_data$X
 sample_info_data$X <- NULL
 ```
 *This code was inspired by the response by Matthew Lundberg to this Stack Overflow question [].*
 (https://stackoverflow.com/questions/20643166/set-a-data-frame-column-as-the-index-of-r-data-frame-object)
 
+We have biological sample information for all 14 samples.
 
 ```{r}
 sample_info_data
 ```
 
+Now that we are sure our data is clean and normalized, we can begin our analysis.
+
+## Data Separation By Category
+
+In order to determine what category we should use to calculate differential expression, we will look at how our data separates according to each classification that we have data for. We will use a **Multidimensional Scaling (MDS)** plot to help us assess the similarities between samples based on their expression profiles [@hout2013]. This will show us how well the samples are grouped by their biological characteristics, such as disease state and clinical trial [@hout2013].
+
 We will begin by assessing how well the samples separate by disease state.
 
 ```{r, message=FALSE, warning=FALSE}
-limma::plotMDS(tnbc_dge_list, labels=NULL, pch = 1,
-               col = c("darkgreen","blue")[factor(sample_df$diseaseState)])
+tnbc_dge_list <- edgeR::DGEList(counts=normalized_tnbc_data, group=sample_info_data$diseaseState)
+tnbc_norm_factors <- calcNormFactors(tnbc_dge_list)
+
+limma::plotMDS(tnbc_norm_factors, labels=NULL, pch = 1,
+               col = c("darkgreen","blue")[factor(sample_info_data$diseaseState)])
 
 legend("topright", 
-       legend=levels(factor(sample_df$diseaseState)),
+       legend=levels(factor(sample_info_data$diseaseState)),
   pch=c(1), col= c("darkgreen","blue"),title="Class",
   bty = 'n', cex = 0.75)
 
@@ -138,40 +153,146 @@ mtext("MDS plot of TNBC RNASeq data coloured by disease state.", side = 1, line 
 
 There is a very clear separation of samples by disease state, indicating that this is a very predictive feature for our model. This is a good sign, considering our goal is characterizing the difference in disease state between healthy and TNBC samples!
 
+Let's also take a look at how samples cluster according to clinical trial.
+
+
+```{r, message=FALSE, warning=FALSE}
+tnbc_dge_list_trial <- edgeR::DGEList(counts=normalized_tnbc_data, group=sample_info_data$trial)
+tnbc_norm_factors_trial <- calcNormFactors(tnbc_dge_list)
+
+limma::plotMDS(tnbc_norm_factors_trial, labels=NULL, pch = 1,
+               col = c("darkgreen","blue", "purple")[factor(sample_info_data$trial)])
+
+legend("topright", 
+       legend=levels(factor(sample_info_data$trial)),
+  pch=c(1), col= c("darkgreen","blue", "purple"),title="Class",
+  bty = 'n', cex = 0.75)
+
+mtext("MDS plot of TNBC RNASeq data coloured by clinical trial", side = 1, line = 4, cex = 0.75)
+```
+
+There is no distinct separation between TNB and Tonic samples, which is good! It means that trial does not add any obvious technical variability that may get in the way when looking for biological variability.
+
 Ideally, we would have liked to look at how the samples separate in response to cancer stage and chemotherapy level, however, the authors did not include that information in the sample information. We will stick with disease state as our main factor for the model we will use for differential expression.
 
 # Computing Differential Expression
 
-```{r}
-model_design_pattern <- model.matrix(~ sample_df$diseaseState)
-```
+# TODO explain DE
+
+We will use the the `edgeR` package with the `glmQLFit` function to calculate differential expression. We will begin by creating a model to separate by disease state and then fitting the data to our model.
 
 ```{r}
-d <- DGEList(counts=normalized_tnbc_data, group=sample_df$diseaseState)
-d <- estimateDisp(d, model_design_pattern)
-fit <- glmQLFit(d, model_design_pattern)
+# set up model based off disease state
+model_design_pattern <- model.matrix(~ sample_info_data$diseaseState)
+
+# calculate dispersion and fit it to the model
+tnbc_dispersion <- estimateDisp(tnbc_dge_list, model_design_pattern)
+tnbc_fit <- glmQLFit(tnbc_dispersion, model_design_pattern)
 ```
 
+Now, we are ready to run our differential expression test.
 ```{r}
-qlf_disease_state <- glmQLFTest(fit, coef='sample_df$diseaseStateTriple-Negative Breast Cancer')
+qlf_disease_state <- glmQLFTest(tnbc_fit, coef='sample_info_data$diseaseStateTriple-Negative Breast Cancer')
 qlf_output_hits <- topTags(qlf_disease_state, sort.by = "PValue", n = nrow(normalized_tnbc_data))
 ```
 
+Let's take a look at our results. Specifically, we will look at how many genes were significantly differentially expressed with a p-value < 0.05. This is the standard p-value threshold for statistical significance.
 
 ```{r}
-pass_threshold <- length(which(qlf_output_hits$table$PValue < 0.05))
-pass_correction <- length(which(qlf_output_hits$table$FDR < 0.05))
+results_table <- qlf_output_hits$table
+results_table$gene <- rownames(results_table)
 
-print(pass_threshold)
-print(pass_correction)
+print(length(results_table$gene[results_table$PValue < 0.05]))
 ```
 
+There are 572 significantly differentially expressed genes in this dataset.
+
+## Multiple Hypothesis Testing
+
+# TODO add section explaining what it is 
+
+We will apply Benjamini-Hochberg (BH) correction for multiple hypothesis testing. The BH method controls the False Discovery Rate (FDR) instead of the Family-Wise Error Rate (FWER) like other methods, making it less-stringent and more beneficial for discovery (https://link.springer.com/referenceworkentry/10.1007/978-1-4419-9863-7_1215). We will use the FDR values provided by edgeR.
+
+Additionally, after reading several papers and discussion forums, we will go with a FDR cutoff of 0.1. The general consensus in the scientific discovery community is that an FDR value < 0.1 is acceptable in the case of exploratory studies, where we are prioritizing discovery over stringent control of false positives (https://www.statsig.com/blog/understanding-significance-levels-a-key-to-accurate-data-analysis, https://groups.google.com/g/trinityrnaseq-users/c/T9VBfIAMbjU?pli=1). Other packages also make use of this cutoff, for example, the standard FDR cutoff in DeSeq2 is 0.1 (https://bioconductor.org/packages/release/bioc/manuals/DESeq2/man/DESeq2.pdf).
 
 ```{r}
-pass_lighter_correction <- length(which(qlf_output_hits$table$FDR < 0.1))
-
-print(pass_lighter_correction)
+print(results_table$gene[results_table$FDR <= 0.1 & results_table$PValue < 0.05])
 ```
 
-572 genes have a p-value < 0.05 but only 2 of them pass correction with FDR < 0.05. Even more worrisome, only 13 pass a lighter correction with FDR < 0.01. 
+We are left with 13 genes that pass our BH correction with FDR < 0.01. This gene set will be the main focus of our analysis moving forward.
 
+
+### Volcano Plot
+
+Let's take a look at the amount of differentially expressed genes in our dataset. The genes that pass correction are labelled and have a star point. Those coloured in red are UP regulated and those in blue are DOWN regulated, with a p-value of 0.05 and a log fold-change cutoff of 1.1. The choice of logFC inspired from this forum post https://support.bioconductor.org/p/98367/.
+
+```{r}
+# a column to categorize whether something is differentially expressed or not
+results_table$diffexpressed <- "NO"
+# if logFC > 1.1 and p-value < 0.05, set as "UP" 
+results_table$diffexpressed[results_table$logFC > 1.1 & results_table$PValue < 0.05] <- "UP"
+# if logFC < -1.1 and p-value < 0.05, set as "DOWN" 
+results_table$diffexpressed[results_table$logFC < -1.1 & results_table$PValue < 0.05] <- "DOWN"
+
+# add a column to label the differentially expressed genes that pass correction
+results_table$label <- NA
+results_table$label[results_table$FDR <= 0.1] <- results_table$gene[results_table$FDR <= 0.1]
+
+# plot adding up all layers we have seen so far
+ggplot(data=results_table, aes(x=logFC, y=-log10(PValue), col=diffexpressed, label=label)) +
+        geom_point() + 
+  geom_point(data=subset(results_table, !is.na(label)), shape=8, size=3) +  # star markers for labeled genes
+        theme_minimal() +
+        geom_text_repel() +
+        scale_color_manual(values=c("blue", "black", "red")) +
+        geom_vline(xintercept=c(-1.1, 1.1), col="red") +
+        geom_hline(yintercept=-log10(0.05), col="red")
+
+```
+
+code inspred from https://biocorecrg.github.io/CRG_RIntroduction/volcano-plots.html.
+
+We have an almost even split across our target genes, with 6 genes down-regulated and 7 genes up-regulated.
+
+### Heatmap
+
+Let's take a look at how the 572 significantly expressed differential genes separate according to disease state using a heatmap. Genes that are up-regulated in a sample with show up red on the heatmap, and those down-regulated will show up as blue. 
+
+We will begin by row-normalizing our heatmap data so that the average expression level in each row is centred around 0. This way, if the expression for a gene is higher than average in one sample it will be red, and if its lower than average it will be blue.  
+
+```{r}
+# take out the top-hits with p-value < 0.05
+top_hits <- rownames(qlf_output_hits$table)[qlf_output_hits$table$PValue<0.05]
+
+# index only the top hits and row-normalize the data
+heatmap_matrix_tophits <- t(scale(t(normalized_tnbc_data[which(rownames(normalized_tnbc_data) %in% top_hits),])))
+
+# set up colors for the heatmap
+heatmap_col = colorRamp2(c(min(heatmap_matrix_tophits), 0, max(heatmap_matrix_tophits)), 
+                         c("blue", "white", "red"))
+
+
+# create color mapping for disease state
+unique_tnbc <- unique(sample_info_data$diseaseState)
+unique_tnbc_colors <- rainbow(n = length(unique_tnbc))
+names(unique_tnbc_colors) <- unique_tnbc
+
+# set up annotation by disease state
+ha_pat <- HeatmapAnnotation(df = data.frame(tnbc = sample_info_data$diseaseState),
+                            col = list(tnbc = unique_tnbc_colors), show_legend = TRUE)
+
+# plot heatmap
+tnbc_heatmap <- Heatmap(as.matrix(heatmap_matrix_tophits),
+                        top_annotation = ha_pat, # set up heatmap annotation
+                        column_split = sample_info_data$diseaseState, # cluster by disease state
+                        cluster_rows = TRUE, cluster_columns = TRUE, # cluster rows and columns
+                        show_row_dend =TRUE, show_column_dend = TRUE,  # show row and column dendrograms
+                        col=heatmap_col, # set up colors
+                        show_column_names = FALSE, show_row_names = FALSE, # dont show row or col names
+                        show_heatmap_legend = TRUE, # show legend
+                        column_title = ("Top hits Healthy vs. TNBC"))
+
+tnbc_heatmap
+```
+
+We can see that the genes in the top third of our heatmap appears to be lowly ezpressed in TNBC samples and the bottom two-thirds seem to be lowly expressed in healthy samples. We will return to this observation later.
