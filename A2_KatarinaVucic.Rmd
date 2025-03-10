@@ -29,10 +29,11 @@ In previous work, we have taken this dataset and cleaned it for further analysis
 
 Now, we will perform differential gene expression using `edgeR`, and conduct an over-representation analysis. 
 
-#TODO: flesh out intro and add more detail. maybe include some figures.
+TODO: flesh out intro and add more detail. maybe include some figures.
 
 ---
 
+## Data Import and Cleaning
 
 We will begin by importing our normalized TNBC data. 
 
@@ -46,6 +47,7 @@ library(ComplexHeatmap)
 library(circlize)
 library(ggrepel)
 library(ggplot2)
+library(gprofiler2)
 ```
 
 ```{r}
@@ -130,9 +132,11 @@ sample_info_data
 
 Now that we are sure our data is clean and normalized, we can begin our analysis.
 
-## Data Separation By Category
+## Data Separation
 
 In order to determine what category we should use to calculate differential expression, we will look at how our data separates according to each classification that we have data for. We will use a **Multidimensional Scaling (MDS)** plot to help us assess the similarities between samples based on their expression profiles [@hout2013]. This will show us how well the samples are grouped by their biological characteristics, such as disease state and clinical trial [@hout2013].
+
+### Data Separation by Disease State
 
 We will begin by assessing how well the samples separate by disease state.
 
@@ -153,8 +157,10 @@ mtext("MDS plot of TNBC RNASeq data coloured by disease state.", side = 1, line 
 
 There is a very clear separation of samples by disease state, indicating that this is a very predictive feature for our model. This is a good sign, considering our goal is characterizing the difference in disease state between healthy and TNBC samples!
 
-Let's also take a look at how samples cluster according to clinical trial.
 
+### Data Separation by Clinical Trial
+
+Let's also take a look at how samples cluster according to clinical trial.
 
 ```{r, message=FALSE, warning=FALSE}
 tnbc_dge_list_trial <- edgeR::DGEList(counts=normalized_tnbc_data, group=sample_info_data$trial)
@@ -175,9 +181,9 @@ There is no distinct separation between TNB and Tonic samples, which is good! It
 
 Ideally, we would have liked to look at how the samples separate in response to cancer stage and chemotherapy level, however, the authors did not include that information in the sample information. We will stick with disease state as our main factor for the model we will use for differential expression.
 
-# Computing Differential Expression
+# Differential Gene Expression
 
-# TODO explain DE
+TODO explain DE
 
 We will use the the `edgeR` package with the `glmQLFit` function to calculate differential expression. We will begin by creating a model to separate by disease state and then fitting the data to our model.
 
@@ -209,7 +215,9 @@ There are 572 significantly differentially expressed genes in this dataset.
 
 ## Multiple Hypothesis Testing
 
-# TODO add section explaining what it is 
+TODO add section explaining what it is 
+
+### Benjamini-Hochberg FDR Correction
 
 We will apply Benjamini-Hochberg (BH) correction for multiple hypothesis testing. The BH method controls the False Discovery Rate (FDR) instead of the Family-Wise Error Rate (FWER) like other methods, making it less-stringent and more beneficial for discovery (https://link.springer.com/referenceworkentry/10.1007/978-1-4419-9863-7_1215). We will use the FDR values provided by edgeR.
 
@@ -219,10 +227,11 @@ Additionally, after reading several papers and discussion forums, we will go wit
 print(results_table$gene[results_table$FDR <= 0.1 & results_table$PValue < 0.05])
 ```
 
-We are left with 13 genes that pass our BH correction with FDR < 0.01. This gene set will be the main focus of our analysis moving forward.
+We are left with 13 genes that pass our BH correction with FDR < 0.01.
 
+### Visualizing Differentially Expressed Genes
 
-### Volcano Plot
+#### Volcano Plot
 
 Let's take a look at the amount of differentially expressed genes in our dataset. The genes that pass correction are labelled and have a star point. Those coloured in red are UP regulated and those in blue are DOWN regulated, with a p-value of 0.05 and a log fold-change cutoff of 1.1. The choice of logFC inspired from this forum post https://support.bioconductor.org/p/98367/.
 
@@ -254,7 +263,7 @@ code inspred from https://biocorecrg.github.io/CRG_RIntroduction/volcano-plots.h
 
 We have an almost even split across our target genes, with 6 genes down-regulated and 7 genes up-regulated.
 
-### Heatmap
+#### Heatmap
 
 Let's take a look at how the 572 significantly expressed differential genes separate according to disease state using a heatmap. Genes that are up-regulated in a sample with show up red on the heatmap, and those down-regulated will show up as blue. 
 
@@ -296,3 +305,121 @@ tnbc_heatmap
 ```
 
 We can see that the genes in the top third of our heatmap appears to be lowly ezpressed in TNBC samples and the bottom two-thirds seem to be lowly expressed in healthy samples. We will return to this observation later.
+
+
+# Over-Representation Analysis
+
+We will use gprofiler to perform thresholded over-representation analysis (add info from lec).
+
+Let's begin by creating our upregulated and downregulated gene sets. We declare a gene as significantly upregulated if it has a p-value < 0.05 and a log fold change > 1.1 (cite paper from before). We declare our significantly downregulated genes as those with a p-value < 0.05 and a log fold change < -1.1.
+
+```{r}
+upregulated_genes <- results_table$gene[which(results_table$PValue < 0.05 & results_table$logFC > 1.1)]
+
+downregulated_genes <- results_table$gene[which(results_table$PValue < 0.05 & results_table$logFC < -1.1)]
+
+combined_genes <- results_table$gene[which(results_table$PValue < 0.05 & (results_table$logFC > 1.1 | results_table$logFC < -1.1))]
+
+top_genes <- results_table$gene[which(results_table$PValue < 0.05 & results_table$FDR < 0.1)]
+
+print(length(upregulated_genes))
+print(length(downregulated_genes))
+```
+
+
+We have 78 differentially expressed upregulated genes and 155 differentially expressed downregulated genes.
+We will use GO: Biological Process. This is the most common dataset for enrichment analysis, since it helps us understand the biological functions and pathways that are significantly enriched in our gene set (https://pmc.ncbi.nlm.nih.gov/articles/PMC6607905/#:~:text=Gene%20Ontology%20(GO)57:%20GO%20provides%20a%20hierarchically,based%20on%20these%20terms%20for%20multiple%20species.&text=Most%20enrichment%20analysis%20methods%20make%20unrealistic%20assumptions,independence%20among%20genes%20as%20well%20as%20pathways.).
+
+## Overall Differential Expression Analysis
+
+We will begin by performing differential expression on the full list.
+```{r}
+query_set <- combined_genes
+
+gprofiler_results <- gost(query = query_set ,
+                          significant=FALSE,
+                          ordered_query = FALSE,
+                          exclude_iea=TRUE,
+                          correction_method = "fdr",
+                          organism = "hsapiens",
+                          source = c("GO:BP"))
+
+combined_results <- as.data.frame(gprofiler_results$result)
+print(combined_results)
+```
+
+We do not get any significant results when we include both sets. 
+
+## Up-Regulated Differential Expression Analysis
+
+Let's see what happens when we perform our analysis on the upregulated and downregulated genes separately. We will begin with upregulated genes
+
+```{r}
+query_set <- upregulated_genes
+
+gprofiler_results <- gost(query = query_set ,
+                          significant=TRUE,
+                          ordered_query = FALSE,
+                          exclude_iea=TRUE,
+                          correction_method = "fdr",
+                          organism = "hsapiens",
+                          source = c("GO:BP"))
+
+upregulated_results <- as.data.frame(gprofiler_results$result)
+print(upregulated_results)
+```
+
+For upregulated genes, the significant hits are defense response to fungus, response to fungus, positive regulation of blood coagulation, positive regulation of hemostasis, and positive regulation of coagulation. Much to think about.
+
+## Down-Regulated Differential Expression Analysis
+
+Now let's try with the down-regulated genes
+
+```{r}
+query_set <- downregulated_genes
+
+gprofiler_results <- gost(query = query_set ,
+                          significant=TRUE,
+                          ordered_query = FALSE,
+                          exclude_iea=TRUE,
+                          correction_method = "fdr",
+                          organism = "hsapiens",
+                          source = c("GO:BP"))
+
+downregulated_results <- as.data.frame(gprofiler_results$result)
+print(downregulated_results)
+```
+
+
+The most common pathways here are macromolecule metabolic process	
+mitochondrial translation	
+mitochondrial gene expression	
+eosinophil migration	
+chemokine-mediated signaling pathway
+eosinophil chemotaxis	
+macromolecule biosynthetic process	
+response to chemokine	
+cellular response to chemokine	
+gene expression
+
+## FDR-Corrected Gene Differential Expression Analysis
+
+```{r}
+query_set <- top_genes
+
+gprofiler_results <- gost(query = query_set ,
+                          significant=FALSE,
+                          ordered_query = FALSE,
+                          exclude_iea=TRUE,
+                          correction_method = "fdr",
+                          organism = "hsapiens",
+                          source = c("GO:BP"))
+
+top_results <- as.data.frame(gprofiler_results$result)
+print(top_results)
+```
+
+Our top expressed genes all belong to different groups, so there is no significant pathway between them.
+
+TODO: code inspired by https://risserlin.github.io/CBW_pathways_workshop_R_notebooks/run-gprofiler-from-r.html for all gprofiler runs.
+
