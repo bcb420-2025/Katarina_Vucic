@@ -37,7 +37,7 @@ TODO: flesh out intro and add more detail. maybe include some figures.
 
 We will begin by importing our normalized TNBC data. 
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 if (!requireNamespace("ggrepel", quietly = TRUE)) {
   install.packages("ggrepel")
 }
@@ -50,7 +50,7 @@ library(ggplot2)
 library(gprofiler2)
 ```
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 # load in data from csv file
 normalized_tnbc_data <- read.csv("normalized_tnbc_data.csv")
 
@@ -61,9 +61,9 @@ normalized_tnbc_data$X <- NULL
 *This code was inspired by the response by Matthew Lundberg to this Stack Overflow question [].*
 (https://stackoverflow.com/questions/20643166/set-a-data-frame-column-as-the-index-of-r-data-frame-object)
 
-As a reminder, our dataframe contains the nromalized read counts of 3690 genes for 14 samples.
+As a reminder, our dataframe contains the normalized read counts of 3690 genes for 14 samples.
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 normalized_tnbc_data
 ```
 
@@ -113,7 +113,7 @@ Since our data has aligned means across samples, with the distribution resemblin
 
 Lets load in the sample dataframe next.
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 # load in data from csv file
 sample_info_data <- read.csv("sample_info_data.csv")
 
@@ -126,7 +126,7 @@ sample_info_data$X <- NULL
 
 We have biological sample information for all 14 samples.
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 sample_info_data
 ```
 
@@ -187,7 +187,7 @@ TODO explain DE
 
 We will use the the `edgeR` package with the `glmQLFit` function to calculate differential expression. We will begin by creating a model to separate by disease state and then fitting the data to our model.
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 # set up model based off disease state
 model_design_pattern <- model.matrix(~ sample_info_data$diseaseState)
 
@@ -197,14 +197,14 @@ tnbc_fit <- glmQLFit(tnbc_dispersion, model_design_pattern)
 ```
 
 Now, we are ready to run our differential expression test.
-```{r}
+```{r, message=FALSE, warning=FALSE}
 qlf_disease_state <- glmQLFTest(tnbc_fit, coef='sample_info_data$diseaseStateTriple-Negative Breast Cancer')
 qlf_output_hits <- topTags(qlf_disease_state, sort.by = "PValue", n = nrow(normalized_tnbc_data))
 ```
 
 Let's take a look at our results. Specifically, we will look at how many genes were significantly differentially expressed with a p-value < 0.05. This is the standard p-value threshold for statistical significance.
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 results_table <- qlf_output_hits$table
 results_table$gene <- rownames(results_table)
 
@@ -212,6 +212,10 @@ print(length(results_table$gene[results_table$PValue < 0.05]))
 ```
 
 There are 572 significantly differentially expressed genes in this dataset.
+
+```{r, message=FALSE, warning=FALSE}
+as.data.frame(results_table)
+```
 
 ## Multiple Hypothesis Testing
 
@@ -223,7 +227,7 @@ We will apply Benjamini-Hochberg (BH) correction for multiple hypothesis testing
 
 Additionally, after reading several papers and discussion forums, we will go with a FDR cutoff of 0.1. The general consensus in the scientific discovery community is that an FDR value < 0.1 is acceptable in the case of exploratory studies, where we are prioritizing discovery over stringent control of false positives (https://www.statsig.com/blog/understanding-significance-levels-a-key-to-accurate-data-analysis, https://groups.google.com/g/trinityrnaseq-users/c/T9VBfIAMbjU?pli=1). Other packages also make use of this cutoff, for example, the standard FDR cutoff in DeSeq2 is 0.1 (https://bioconductor.org/packages/release/bioc/manuals/DESeq2/man/DESeq2.pdf).
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 print(results_table$gene[results_table$FDR <= 0.1 & results_table$PValue < 0.05])
 ```
 
@@ -235,7 +239,7 @@ We are left with 13 genes that pass our BH correction with FDR < 0.01.
 
 Let's take a look at the amount of differentially expressed genes in our dataset. The genes that pass correction are labelled and have a star point. Those coloured in red are UP regulated and those in blue are DOWN regulated, with a p-value of 0.05 and a log fold-change cutoff of 1.1. The choice of logFC inspired from this forum post https://support.bioconductor.org/p/98367/.
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 # a column to categorize whether something is differentially expressed or not
 results_table$diffexpressed <- "NO"
 # if logFC > 1.1 and p-value < 0.05, set as "UP" 
@@ -269,7 +273,7 @@ Let's take a look at how the 572 significantly expressed differential genes sepa
 
 We will begin by row-normalizing our heatmap data so that the average expression level in each row is centred around 0. This way, if the expression for a gene is higher than average in one sample it will be red, and if its lower than average it will be blue.  
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 # take out the top-hits with p-value < 0.05
 top_hits <- rownames(qlf_output_hits$table)[qlf_output_hits$table$PValue<0.05]
 
@@ -313,7 +317,7 @@ We will use gprofiler to perform thresholded over-representation analysis (add i
 
 Let's begin by creating our upregulated and downregulated gene sets. We declare a gene as significantly upregulated if it has a p-value < 0.05 and a log fold change > 1.1 (cite paper from before). We declare our significantly downregulated genes as those with a p-value < 0.05 and a log fold change < -1.1.
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 upregulated_genes <- results_table$gene[which(results_table$PValue < 0.05 & results_table$logFC > 1.1)]
 
 downregulated_genes <- results_table$gene[which(results_table$PValue < 0.05 & results_table$logFC < -1.1)]
@@ -333,7 +337,7 @@ We will use GO: Biological Process. This is the most common dataset for enrichme
 ## Overall Differential Expression Analysis
 
 We will begin by performing differential expression on the full list.
-```{r}
+```{r, message=FALSE, warning=FALSE}
 query_set <- combined_genes
 
 gprofiler_results <- gost(query = query_set ,
@@ -345,7 +349,7 @@ gprofiler_results <- gost(query = query_set ,
                           source = c("GO:BP"))
 
 combined_results <- as.data.frame(gprofiler_results$result)
-print(combined_results)
+combined_results
 ```
 
 We do not get any significant results when we include both sets. 
@@ -354,7 +358,7 @@ We do not get any significant results when we include both sets.
 
 Let's see what happens when we perform our analysis on the upregulated and downregulated genes separately. We will begin with upregulated genes
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 query_set <- upregulated_genes
 
 gprofiler_results <- gost(query = query_set ,
@@ -366,16 +370,18 @@ gprofiler_results <- gost(query = query_set ,
                           source = c("GO:BP"))
 
 upregulated_results <- as.data.frame(gprofiler_results$result)
-print(upregulated_results)
+upregulated_results
 ```
 
-For upregulated genes, the significant hits are defense response to fungus, response to fungus, positive regulation of blood coagulation, positive regulation of hemostasis, and positive regulation of coagulation. Much to think about.
+For upregulated genes, the significant hits are defense response to fungus, response to fungus, positive regulation of blood coagulation, positive regulation of hemostasis, and positive regulation of coagulation.
+
+One of the main groups of GO terms is response to fungus, which includes defense response to fungus and response to fungus (https://geneontology.org/). The other group of up-regulated genes are those concerned with regulation of blood clotting, which includes positive regulation of blood coagulation, positive regulation of hemostasis, and positive regulation of coagulation. These processes help control blood clotting, which is important for stopping bleeding and maintaining proper blood flow after an injury (https://geneontology.org/).
 
 ## Down-Regulated Differential Expression Analysis
 
 Now let's try with the down-regulated genes
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 query_set <- downregulated_genes
 
 gprofiler_results <- gost(query = query_set ,
@@ -387,24 +393,18 @@ gprofiler_results <- gost(query = query_set ,
                           source = c("GO:BP"))
 
 downregulated_results <- as.data.frame(gprofiler_results$result)
-print(downregulated_results)
+downregulated_results
 ```
 
 
-The most common pathways here are macromolecule metabolic process	
-mitochondrial translation	
-mitochondrial gene expression	
-eosinophil migration	
-chemokine-mediated signaling pathway
-eosinophil chemotaxis	
-macromolecule biosynthetic process	
-response to chemokine	
-cellular response to chemokine	
-gene expression
+The most common pathways here are macromolecule metabolic process, mitochondrial translation, mitochondrial gene expression, eosinophil migration, chemokine-mediated signaling pathway, eosinophil chemotaxis, macromolecule biosynthetic process	, response to chemokine, cellular response to chemokine, gene expression (https://geneontology.org/).
+
+One of the main groups here is mitochondrial pathways, including mitochondrial translation and mitochondrial gene expression, which are important for making proteins inside mitochondria, which help cells produce energy. The macromolecule metabolism Pathway, including macromolecule metabolic process and macromolecule biosynthetic process is down-regulated, and involves the synthesis and breakdown of large molecules in cells (https://geneontology.org/). Another pathways is eosinophil migration, which involves eosinophil migration, chemokine-mediated signaling pathway, eosinophil chemotaxis, response to chemokine, and cellular response to chemokine (https://geneontology.org/). Eosinophil's are immune cells involved in allergic reactions, asthma, and parasitic infections (https://my.clevelandclinic.org/health/body/23402-eosinophils). The chemokine signaling pathway regulates their migration, which is important in inflammation and immune defense (https://pmc.ncbi.nlm.nih.gov/articles/PMC4225839/#:~:text=CCL11/eotaxin%20is%20an%20important,during%20allergic%20responses%20(142).). The gene expression pathway is also down-regulated, which is a large group of genes that direct and execute the conversion of genetic information into proteins (https://geneontology.org/).
+
 
 ## FDR-Corrected Gene Differential Expression Analysis
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 query_set <- top_genes
 
 gprofiler_results <- gost(query = query_set ,
@@ -416,10 +416,15 @@ gprofiler_results <- gost(query = query_set ,
                           source = c("GO:BP"))
 
 top_results <- as.data.frame(gprofiler_results$result)
-print(top_results)
+top_results
 ```
 
 Our top expressed genes all belong to different groups, so there is no significant pathway between them.
 
 TODO: code inspired by https://risserlin.github.io/CBW_pathways_workshop_R_notebooks/run-gprofiler-from-r.html for all gprofiler runs.
+
+
+# Discussion
+
+In the original paper, the authors state that they performed Gene Set Enrichment Analysis (GSEA) and found that genes in mTNBC were enriched for genes involved in cell migration. We can see that too in our Down-Regulated Gene Enrichment Analysis, where genes assossciated with eosinophil migration are down-regulated in TNBC patients. 
 
