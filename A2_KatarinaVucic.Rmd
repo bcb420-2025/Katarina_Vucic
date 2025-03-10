@@ -6,13 +6,12 @@ date: "03/11/2025"
 output: 
   html_document:
     toc: true
-    toc_depth: 2
+    toc_depth: 3
     toc_float: true
     number_sections: true
-    theme: flatly
+    theme: default
     highlight: tango
     fig_caption: true
-    df_print: paged 
     code_folding: hide
 bibliography: A2_references.bib
 nocite: '@*'
@@ -21,23 +20,21 @@ link-citations: true
 
 # Introduction
 
-While cancer is one of the most studied diseases in the world, the immune landscape of cancer patients is largely uncharacterized. Previous research has demonstrated that tumours can affect the immune system's response, leading to variations in disease progression and treatment outcomes [@blomberg2018; @mcallister2014]. Neutrophils are a type of white blood cell that play a critical role in the body's immune response [@nci2019]. They respond to conditions in the body by releasing enzymes to destroy microorganisms [@nci2019]. Neutrophils also help to activate other immune cells, making them vital to the immune system [@nci2019]. 
+Triple-Negative Breast Cancer (TNBC) is an aggressive breast cancer subtype associated with a high mortality rate [@americancancersociety_2023]. Despite the constantly-evolving lanscape of cancer research, the immune lanscape of those affected by TNBC remains largely uncharacterized. Prior research has shown that tumors can influence immune system responses, leading to variations in disease progression and treatment outcomes [@blomberg_2018; @mcallister_2014]. Neutrophils, a type of white blood cell, play a crucial role in immune defense by releasing enzymes that break down microorganisms and activating other immune cells, making them essential to the immune response [@nationalcancerinstitute_2019].
 
-Triple-Negative Breast Cancer (TNBC) is a particularly aggressive breast cancer subtype with a high mortality rate [@acs2023]. To investigate immune response in TNBC patients, Bakker et. al performed a bulk RNA-seq experiment designed to identify the differences in the expression of genes in the neutrophils of TNBC patients and healthy donors [@bakker2025]. In this analysis, we continue the work of Bakker et. al by examining their bulk RNA-sequencing results to investigate the expression patterns of genes in TNBC patients.
+To explore immune responses in TNBC patients, Bakker et al. conducted a bulk RNA-seq experiment to analyze differential gene expression in neutrophils from TNBC patients and healthy donors [@bakker_2025]. Building on their work, we examine their bulk RNA-sequencing data to investigate gene expression patterns in TNBC patients. Their results are publicly available in the Gene Expression Omnibus (GEO) under accession number GSE264108 [@barrett_2012].
 
-In previous work, we have taken this dataset and cleaned it for further analysis by removing low read counts and duplicated data before performing Trimmed Mean of M-values (TMM) normalization. In the process of cleaning and normalizing the data, we were left with `3690` genes in our bulk RNA-sequencing experiment. This dataset includes the neutrophils of 7 mTNBC patients in the test set and 7 healthy donors in the control group. All Ensembl IDs are mapped to HGNC symbols, and the counts for duplicate Ensembl IDs for the same HGNC symbol were averaged. The quality checking showed that the data is clean with no missing or non-numeric values. To normalize the data, we used TMM normalization to reduce technical noise. Using the the MDS plot, we see that our samples group nicely by disease state.
+In previous work, we have taken this dataset and cleaned it for further analysis by removing low read counts and duplicated data before performing Trimmed Mean of M-values (TMM) normalization. In the process of cleaning and normalizing the data, we were left with `3690` genes in our bulk RNA-sequencing experiment. This dataset includes the neutrophils of 7 mTNBC patients in the test set and 7 healthy donors in the control group. 
 
-Now, we will perform differential gene expression using `edgeR`, and conduct an over-representation analysis. 
-
-TODO: flesh out intro and add more detail. maybe include some figures.
+In this analysis, we aim to identify and analyze genes with quantitative changes in expression levels between healthy and TNBC samples, by performing differential gene expression, and identifying over-represented sets of genes exhibiting this quantitative change with an over-representation analysis [@emblebi; @isserlin_2025] 
 
 ---
 
 ## Data Import and Cleaning
 
-We will begin by importing our normalized TNBC data. 
+We begin by importing relevant packages for our analysis. We will be using edgeR [@edger] for differential expression; ComplexHeatmap [@complexheatmap], circlize [@circlize], ggrepel [@ggrepel], and ggplot2 [@ggplot2] for plotting; dplyr [@dplyr_2020] for data manipulation; kable extra [@kableextra_2021] for improved table styling; and gprofiler2 [@gprofiler2] for over-representation analysis.
 
-```{r, message=FALSE, warning=FALSE}
+```{r, message=FALSE, warning=FALSE, error=FALSE, results='hide'}
 if (!requireNamespace("ggrepel", quietly = TRUE)) {
   install.packages("ggrepel")
 }
@@ -48,198 +45,224 @@ library(circlize)
 library(ggrepel)
 library(ggplot2)
 library(gprofiler2)
+library(knitr)
+library(kableExtra)
+library(dplyr)
 ```
+
+First, we will import our normalized TNBC data. 
 
 ```{r, message=FALSE, warning=FALSE}
 # load in data from csv file
-normalized_tnbc_data <- read.csv("normalized_tnbc_data.csv")
+normalized_tnbc_data <- read.csv("A2_normalized_tnbc_data.csv")
 
 # reset index and remove the row
 rownames(normalized_tnbc_data) <- normalized_tnbc_data$X
 normalized_tnbc_data$X <- NULL
-```
-*This code was inspired by the response by Matthew Lundberg to this Stack Overflow question [].*
-(https://stackoverflow.com/questions/20643166/set-a-data-frame-column-as-the-index-of-r-data-frame-object)
 
-As a reminder, our dataframe contains the normalized read counts of 3690 genes for 14 samples.
-
-```{r, message=FALSE, warning=FALSE}
-normalized_tnbc_data
+# display the data
+kable(normalized_tnbc_data, format = "html", caption = "  Table 1: Normalized read counts for TNBC vs Healthy Neutrophils") %>%
+  kable_styling(bootstrap_options = "striped", full_width = FALSE) %>% # striped rows for readability, constrain width
+  scroll_box(height = "400px") # set the height of the box so it won't be too big
 ```
 
-Let's take a look at the distribution of the data to confirm that it is in fact normalized.
+*This code was inspired by the response by Matthew Lundberg to this Stack Overflow question [@brno792_2013], and the kable display was inspired by [@stevec_2020] and [@tierney_2020].*
+
+Let's take a look at the distribution of the data to confirm that it is normalized.
 
 ```{r, message=FALSE, warning=FALSE}
-plot_count_distribution <- function(count_data, title = "RNASeq Samples") {
-  data2plot <- log2(count_data)
-  boxplot(data2plot, xlab = "Samples", ylab = "log2 TPM",
-    las = 2, cex = 0.5, cex.lab = 0.5,
-    cex.axis = 0.5, main = "RNASeq Samples")
-  #draw the median on each box plot
-  abline(h = median(apply(data2plot, 2, median)),
-    col = "green", lwd = 0.6, lty = "dashed")
-  mtext("Boxplot of TNBC RNASeq data for each sample", side = 1, line = 4, cex = 0.75)
-  
-  counts_density <- apply(log2(count_data), 2, density)
-    #calculate the limits across all the samples
-    xlim <- 0; ylim <- 0
-    for (i in 1:length(counts_density)) {
-      xlim <- range(c(xlim, counts_density[[i]]$x));
-      ylim <- range(c(ylim, counts_density[[i]]$y))
-    }
-    cols <- rainbow(length(counts_density))
-    ltys <- rep(1, length(counts_density))
-    #plot the first density plot to initialize the plot
-    plot(counts_density[[1]], xlim=xlim, ylim=ylim, type="n",
-      ylab="Smoothing density of log2-CPM",
-      main=paste(title, "- Density Plot"), cex.lab = 0.85)
-    #plot each line
-    for (i in 1:length(counts_density))
-      lines(counts_density[[i]], col=cols[i], lty=ltys[i])
-    #create legend
-    legend("topright", colnames(data2plot),
-      col=cols, lty=ltys, cex=0.75,
-      border ="blue", text.col = "green4",
-      merge = TRUE, bg = "gray90")
-    mtext("Desnity plot of TNBC RNASeq data for each sample.", side = 1, line = 4, cex = 0.75)
+data2plot <- log2(normalized_tnbc_data)
+boxplot(data2plot, xlab = "Samples", ylab = "log2 TPM",
+  las = 2, cex = 0.5, cex.lab = 0.5,
+  cex.axis = 0.5, main = "Boxplot of RNASeq Sample Distributions")
+#draw the median on each box plot
+abline(h = median(apply(data2plot, 2, median)),
+  col = "green", lwd = 0.6, lty = "dashed")
+```
+
+```{r, message=FALSE, warning=FALSE, fig.cap="Figure 1: Distribution of the normalized gene read counts for healthy and TNBC samples. A) A Boxplot of the distribution of read counts for each sample, with a centre line showing the mean. B) An overlaid line graph showing the density function for each sample. This code was modified from the lectures for BCB420: Computational Systems Biology [@isserlin_2025]."}
+counts_density <- apply(log2(normalized_tnbc_data), 2, density)
+#calculate the limits across all the samples
+xlim <- 0; ylim <- 0
+for (i in 1:length(counts_density)) {
+  xlim <- range(c(xlim, counts_density[[i]]$x));
+  ylim <- range(c(ylim, counts_density[[i]]$y))
 }
-
-plot_count_distribution(normalized_tnbc_data, title = "Filtered TNBC Data")
+cols <- rainbow(length(counts_density))
+ltys <- rep(1, length(counts_density))
+#plot the first density plot to initialize the plot
+plot(counts_density[[1]], xlim=xlim, ylim=ylim, type="n",
+  ylab="Smoothing density of log2-CPM",
+  main=paste("Density Plot of RNASeq Sample Distributions"), cex.lab = 0.85)
+#plot each line
+for (i in 1:length(counts_density))
+  lines(counts_density[[i]], col=cols[i], lty=ltys[i])
+#create legend
+legend("topright", colnames(data2plot),
+  col=cols, lty=ltys, cex=0.75,
+  border ="blue", text.col = "green4",
+  merge = TRUE, bg = "gray90")
 ```
-
-*This code was modified from the lectures for BCB420: Computational Systems Biology [@isserlin2025].*
 
 Since our data has aligned means across samples, with the distribution resembling a normal distribution, we can conclude that our data is normalized, as expected. 
 
-Lets load in the sample dataframe next.
+Let's load in the sample dataframe next.
 
 ```{r, message=FALSE, warning=FALSE}
 # load in data from csv file
-sample_info_data <- read.csv("sample_info_data.csv")
+sample_info_data <- read.csv("A2_sample_info_data.csv")
 
 # reset index and remove the row
 rownames(sample_info_data) <- sample_info_data$X
 sample_info_data$X <- NULL
 ```
-*This code was inspired by the response by Matthew Lundberg to this Stack Overflow question [].*
-(https://stackoverflow.com/questions/20643166/set-a-data-frame-column-as-the-index-of-r-data-frame-object)
 
-We have biological sample information for all 14 samples.
+*This code was inspired by the response by Matthew Lundberg to this Stack Overflow question [@brno792_2013].*
+
+We have biological sample information for all 14 samples, with 7 from healthy donors and 7 from TNBC donors. Additionally, we have information about which clinical trial each TNBC sample is from, Tonic or TNB.
 
 ```{r, message=FALSE, warning=FALSE}
-sample_info_data
+# display the data
+kable(sample_info_data, format = "html", caption = "Table 2: Sample information for TNBC and healthy neutrophils.") %>%
+  kable_styling(bootstrap_options = "striped", full_width = FALSE) %>% # striped rows for readability, constrain width
+  scroll_box(height = "400px") # set the height of the box so it won't be too big
 ```
 
 Now that we are sure our data is clean and normalized, we can begin our analysis.
 
-## Data Separation
+---
 
-In order to determine what category we should use to calculate differential expression, we will look at how our data separates according to each classification that we have data for. We will use a **Multidimensional Scaling (MDS)** plot to help us assess the similarities between samples based on their expression profiles [@hout2013]. This will show us how well the samples are grouped by their biological characteristics, such as disease state and clinical trial [@hout2013].
+## Data Separation Analysis
+
+In order to determine what classification we should use to calculate differential expression, we will look at how our data separates according to each classification that we have data for. We will use a Multidimensional Scaling (MDS) plot to help us assess the similarities between samples based on their expression profiles [@hout_2013]. This will show us how well the samples are grouped by their biological characteristics, such as disease state and clinical trial [@hout_2013].
 
 ### Data Separation by Disease State
 
 We will begin by assessing how well the samples separate by disease state.
 
-```{r, message=FALSE, warning=FALSE}
+```{r, message=FALSE, warning=FALSE, fig.cap="Figure 2: MDS plot of TNBC RNASeq data coloured by disease state. Healthy samples are shown in green and TNBC samples are shown in blue. This code was modified from the lectures for BCB420: Computational Systems Biology [@isserlin_2025]."}
+# create DGEList object, grouping by disease state
 tnbc_dge_list <- edgeR::DGEList(counts=normalized_tnbc_data, group=sample_info_data$diseaseState)
+# calculate normalization factors for the DGEList object
 tnbc_norm_factors <- calcNormFactors(tnbc_dge_list)
 
+# plot the multi-dimensional scaling plot for disease state, coloring by different class
 limma::plotMDS(tnbc_norm_factors, labels=NULL, pch = 1,
                col = c("darkgreen","blue")[factor(sample_info_data$diseaseState)])
 
+title(main = "MDS Plot of TNBC RNASeq Data Separation Coloured By Disease State", cex.main = 1.2)
+
+# add a legend for the plot
 legend("topright", 
        legend=levels(factor(sample_info_data$diseaseState)),
   pch=c(1), col= c("darkgreen","blue"),title="Class",
   bty = 'n', cex = 0.75)
-
-mtext("MDS plot of TNBC RNASeq data coloured by disease state.", side = 1, line = 4, cex = 0.75)
 ```
 
 There is a very clear separation of samples by disease state, indicating that this is a very predictive feature for our model. This is a good sign, considering our goal is characterizing the difference in disease state between healthy and TNBC samples!
-
 
 ### Data Separation by Clinical Trial
 
 Let's also take a look at how samples cluster according to clinical trial.
 
-```{r, message=FALSE, warning=FALSE}
+```{r, message=FALSE, warning=FALSE, fig.cap="Figure 3: MDS plot of TNBC RNASeq data coloured by clinical trial. Healthy samples are shown in green, TNB samples are shown in blue, and Tonic samples are shown in purple. This code was modified from the lectures for BCB420: Computational Systems Biology [@isserlin_2025]."}
+# create DGEList object, grouping by disease state
 tnbc_dge_list_trial <- edgeR::DGEList(counts=normalized_tnbc_data, group=sample_info_data$trial)
+# calculate normalization factors for the DGEList object
 tnbc_norm_factors_trial <- calcNormFactors(tnbc_dge_list)
 
+# plot the multi-dimensional scaling plot for clinical trial, coloring by different class
 limma::plotMDS(tnbc_norm_factors_trial, labels=NULL, pch = 1,
                col = c("darkgreen","blue", "purple")[factor(sample_info_data$trial)])
 
+title(main = "MDS Plot of TNBC RNASeq Data Separation Coloured By Clinical Trial", cex.main = 1.2)
+
+# add a legend for the plot
 legend("topright", 
        legend=levels(factor(sample_info_data$trial)),
   pch=c(1), col= c("darkgreen","blue", "purple"),title="Class",
   bty = 'n', cex = 0.75)
-
-mtext("MDS plot of TNBC RNASeq data coloured by clinical trial", side = 1, line = 4, cex = 0.75)
 ```
 
-There is no distinct separation between TNB and Tonic samples, which is good! It means that trial does not add any obvious technical variability that may get in the way when looking for biological variability.
+There is no distinct separation between TNB and Tonic samples, which is good! It means that difference in clinical trial does not add any distinct technical variability that may get in the way when looking for biological variability in our samples.
 
 Ideally, we would have liked to look at how the samples separate in response to cancer stage and chemotherapy level, however, the authors did not include that information in the sample information. We will stick with disease state as our main factor for the model we will use for differential expression.
 
+---
+
 # Differential Gene Expression
 
-TODO explain DE
+Now, we are ready to compute our differential gene expression according to disease state. This will tell us whether an observed difference in read counts across disease state is significant, or greater than we would expect from natural variation [@emblebi] Performing differential expression will give us a quantitative measure of how significant the change in read counts is between healthy and TNBC samples for each gene [@emblebi]. 
 
-We will use the the `edgeR` package with the `glmQLFit` function to calculate differential expression. We will begin by creating a model to separate by disease state and then fitting the data to our model.
+We will use the the `edgeR` package to calculate differential expression. We will begin by creating a model to separate by disease state and then fitting the data to our model with the `glmQLFit` function.
 
 ```{r, message=FALSE, warning=FALSE}
 # set up model based off disease state
 model_design_pattern <- model.matrix(~ sample_info_data$diseaseState)
 
-# calculate dispersion and fit it to the model
+# calculate dispersion based on the model design
 tnbc_dispersion <- estimateDisp(tnbc_dge_list, model_design_pattern)
+# fit the dispersion to the model
 tnbc_fit <- glmQLFit(tnbc_dispersion, model_design_pattern)
 ```
 
-Now, we are ready to run our differential expression test.
+*This code was modified from the lectures for BCB420: Computational Systems Biology [@isserlin_2025].*
+
+Now, we are ready to run our differential expression test using `glmQLFTest`, with TNBC as the state that we are testing for differential expression.
 ```{r, message=FALSE, warning=FALSE}
+# test for differential expression in the TNBC disease state
 qlf_disease_state <- glmQLFTest(tnbc_fit, coef='sample_info_data$diseaseStateTriple-Negative Breast Cancer')
+# retrieve the top p-value hits 
 qlf_output_hits <- topTags(qlf_disease_state, sort.by = "PValue", n = nrow(normalized_tnbc_data))
-```
 
-Let's take a look at our results. Specifically, we will look at how many genes were significantly differentially expressed with a p-value < 0.05. This is the standard p-value threshold for statistical significance.
-
-```{r, message=FALSE, warning=FALSE}
-results_table <- qlf_output_hits$table
+# convert results to a table for easier querying
+results_table <- as.data.frame(qlf_output_hits$table)
+# re-add column with gene name for plotting later
 results_table$gene <- rownames(results_table)
 
+# display the data
+kable(results_table, format = "html", caption = "Table 3: Results from the differential expression analysis for TNBC samples compared to Healthy samples.") %>%
+  kable_styling(bootstrap_options = "striped", full_width = FALSE) %>% # striped rows for readability, constrain width
+  scroll_box(height = "400px") # set the height of the box so it won't be too big
+```
+
+*This code was modified from the lectures for BCB420: Computational Systems Biology [@isserlin_2025].*
+
+Let's take a look at our results. Specifically, we will look at how many genes were significantly differentially expressed with a p-value < 0.05. This is the standard p-value threshold for statistical significance [@andrade_2019].
+
+```{r, message=FALSE, warning=FALSE}
 print(length(results_table$gene[results_table$PValue < 0.05]))
 ```
 
-There are 572 significantly differentially expressed genes in this dataset.
+There are 572 significantly differentially expressed genes in this dataset, with a p-value > 0.05.
 
-```{r, message=FALSE, warning=FALSE}
-as.data.frame(results_table)
-```
+---
 
 ## Multiple Hypothesis Testing
 
-TODO add section explaining what it is 
+From our earlier analysis, we identified 572 significantly differentially expressed genes, however, how can we know for sure that these genes are all significant, and not a result of chance? When we evaluate the statistical significant of our set of `3690` genes with a p-value of 0.05, we expect about `0.05 * 3690 = 184.5` of them to be statistically significant by chance [@statsig_2024].
 
 ### Benjamini-Hochberg FDR Correction
 
-We will apply Benjamini-Hochberg (BH) correction for multiple hypothesis testing. The BH method controls the False Discovery Rate (FDR) instead of the Family-Wise Error Rate (FWER) like other methods, making it less-stringent and more beneficial for discovery (https://link.springer.com/referenceworkentry/10.1007/978-1-4419-9863-7_1215). We will use the FDR values provided by edgeR.
+We will apply Benjamini-Hochberg (BH) correction for multiple hypothesis testing. The BH method controls the False Discovery Rate (FDR) instead of the Family-Wise Error Rate (FWER) like other methods, making it less-stringent and more beneficial for discovery [@haynes_2013]. We will use the FDR values provided by `edgeR` in our results table.
 
-Additionally, after reading several papers and discussion forums, we will go with a FDR cutoff of 0.1. The general consensus in the scientific discovery community is that an FDR value < 0.1 is acceptable in the case of exploratory studies, where we are prioritizing discovery over stringent control of false positives (https://www.statsig.com/blog/understanding-significance-levels-a-key-to-accurate-data-analysis, https://groups.google.com/g/trinityrnaseq-users/c/T9VBfIAMbjU?pli=1). Other packages also make use of this cutoff, for example, the standard FDR cutoff in DeSeq2 is 0.1 (https://bioconductor.org/packages/release/bioc/manuals/DESeq2/man/DESeq2.pdf).
+Additionally, we will go with a FDR cutoff of 0.1. The general consensus in the scientific discovery community is that an FDR value < 0.1 is acceptable in the case of exploratory studies, where we are prioritizing discovery over stringent control of false positives [@virag_2024]. Additionally, the original paper conducted their differential gene expression analysis using DeSeq2 [@bakker_2025], and the standard FDR cutoff in DeSeq2 is 0.1 as well, so we find this a fitting cutoff to use [@deseq2].
 
 ```{r, message=FALSE, warning=FALSE}
 print(results_table$gene[results_table$FDR <= 0.1 & results_table$PValue < 0.05])
 ```
 
-We are left with 13 genes that pass our BH correction with FDR < 0.01.
+We are now left with 13 significantly differentially expressed genes that pass our BH correction with FDR < 0.01. Our top hits are `TSPO`, `RP4-605O3.4`, `PGLYRP1`, `C3AR1`, `STRN3`, `SLC12A1`, `HK3`, `UTP6`, `B3GNT2`, `CTC-236F12.4`, `KREMEN1`, `RPP21`, and `RP1-313I6.12`. We will characterize these genes in the over-representation analysis.
 
-### Visualizing Differentially Expressed Genes
+---
 
-#### Volcano Plot
+## Visualizing Differentially Expressed Genes
 
-Let's take a look at the amount of differentially expressed genes in our dataset. The genes that pass correction are labelled and have a star point. Those coloured in red are UP regulated and those in blue are DOWN regulated, with a p-value of 0.05 and a log fold-change cutoff of 1.1. The choice of logFC inspired from this forum post https://support.bioconductor.org/p/98367/.
+### Volcano Plot
 
-```{r, message=FALSE, warning=FALSE}
+Let's take a look at the upregulated and downregulated differentially expressed genes in our dataset.
+
+```{r, message=FALSE, warning=FALSE, fig.cap="Figure 4: Volcano Plot of differentially expressed genes. The genes that pass correction are labelled and have a star point. Those coloured in red are upregulated and those in blue are downregulated, with a p-value of 0.05 and a log fold-change cutoff of 1.1, inspired by this forum post [@cms72_2017]. This code was inspired by this tutorial [@bonnin_2019]."}
 # a column to categorize whether something is differentially expressed or not
 results_table$diffexpressed <- "NO"
 # if logFC > 1.1 and p-value < 0.05, set as "UP" 
@@ -254,26 +277,24 @@ results_table$label[results_table$FDR <= 0.1] <- results_table$gene[results_tabl
 # plot adding up all layers we have seen so far
 ggplot(data=results_table, aes(x=logFC, y=-log10(PValue), col=diffexpressed, label=label)) +
         geom_point() + 
-  geom_point(data=subset(results_table, !is.na(label)), shape=8, size=3) +  # star markers for labeled genes
-        theme_minimal() +
-        geom_text_repel() +
-        scale_color_manual(values=c("blue", "black", "red")) +
-        geom_vline(xintercept=c(-1.1, 1.1), col="red") +
-        geom_hline(yintercept=-log10(0.05), col="red")
-
+        geom_point(data=subset(results_table, !is.na(label)), shape=8, size=3) +  # star markers for labeled genes
+        theme_minimal() + # minimal theme
+        geom_text_repel() + # text for subsets
+        scale_color_manual(values=c("blue", "black", "red")) + # colors for each significance category
+        geom_vline(xintercept=c(-1.1, 1.1), col="red") + # add log fc line
+        geom_hline(yintercept=-log10(0.05), col="red") + # add p-value line
+        ggtitle("Volcano Plot of Differential Expression Between TNBC and Healthy Samples")
 ```
 
-code inspred from https://biocorecrg.github.io/CRG_RIntroduction/volcano-plots.html.
+We have an almost even split across our target FDR-corrected genes, with 6 genes downregulated and 7 genes upregulated.
 
-We have an almost even split across our target genes, with 6 genes down-regulated and 7 genes up-regulated.
+### Heatmap
 
-#### Heatmap
+Let's take a look at how the 572 significantly expressed differential genes separate according to disease state using a heatmap.
 
-Let's take a look at how the 572 significantly expressed differential genes separate according to disease state using a heatmap. Genes that are up-regulated in a sample with show up red on the heatmap, and those down-regulated will show up as blue. 
+We will begin by row-normalizing our heatmap data so that the average expression level in each row is centred around 0. This way, if the expression for a gene is higher than average in one sample it will be closer to red, and if its lower than average it will be closer to blue.  
 
-We will begin by row-normalizing our heatmap data so that the average expression level in each row is centred around 0. This way, if the expression for a gene is higher than average in one sample it will be red, and if its lower than average it will be blue.  
-
-```{r, message=FALSE, warning=FALSE}
+```{r, message=FALSE, warning=FALSE, fig.cap="Figure 5: A heatmap of our differentially expressed genes. If a gene is expressed higher than average it is more red, and if it is expressed lower than average it is more blue. This code was modified from the lectures for BCB420: Computational Systems Biology [@isserlin_2025]."}
 # take out the top-hits with p-value < 0.05
 top_hits <- rownames(qlf_output_hits$table)[qlf_output_hits$table$PValue<0.05]
 
@@ -303,128 +324,225 @@ tnbc_heatmap <- Heatmap(as.matrix(heatmap_matrix_tophits),
                         col=heatmap_col, # set up colors
                         show_column_names = FALSE, show_row_names = FALSE, # dont show row or col names
                         show_heatmap_legend = TRUE, # show legend
-                        column_title = ("Top hits Healthy vs. TNBC"))
+                        column_title = ("Top Differentially Expressed Genes in TNBC vs. Healthy Samples"))
 
 tnbc_heatmap
 ```
 
-We can see that the genes in the top third of our heatmap appears to be lowly ezpressed in TNBC samples and the bottom two-thirds seem to be lowly expressed in healthy samples. We will return to this observation later.
+We can see that the genes in the top third of our heatmap appears to be lowly expressed in TNBC samples and the bottom two-thirds seem to be lowly expressed in healthy samples.
 
+---
 
 # Over-Representation Analysis
 
-We will use gprofiler to perform thresholded over-representation analysis (add info from lec).
+Now, let's look more carefully at our differnetially expressed genes by performing thresholded over-representation analysis. This will let us determine if there are any gene lists that are statistically over-represented in our set of genes, that is, there are more genes corresponding to a pathway or function than we would expect when assuming a random distribution [@isserlin_2025].
 
-Let's begin by creating our upregulated and downregulated gene sets. We declare a gene as significantly upregulated if it has a p-value < 0.05 and a log fold change > 1.1 (cite paper from before). We declare our significantly downregulated genes as those with a p-value < 0.05 and a log fold change < -1.1.
+Let's begin by creating our upregulated and downregulated gene sets. We declare a gene as significantly upregulated if it has a p-value < 0.05 and a log fold change > 1.1 [@cms72_2017]. We declare our significantly downregulated genes as those with a p-value < 0.05 and a log fold change < -1.1 [@cms72_2017].
 
 ```{r, message=FALSE, warning=FALSE}
+# create a set for upregulated genes with p-value < 0.05 and log fold-change > 1.1
 upregulated_genes <- results_table$gene[which(results_table$PValue < 0.05 & results_table$logFC > 1.1)]
 
+# create a set for downregulated genes with p-value < 0.05 and log fold-change < -1.1
 downregulated_genes <- results_table$gene[which(results_table$PValue < 0.05 & results_table$logFC < -1.1)]
 
+# create a set for upregulated genes with p-value < 0.05 and log fold-change > 1.1 or log fold-change < -1.1
 combined_genes <- results_table$gene[which(results_table$PValue < 0.05 & (results_table$logFC > 1.1 | results_table$logFC < -1.1))]
 
+# create a set for the genes that pass BH correction with p-value < 0.05 and false discovery rate < 0.1
 top_genes <- results_table$gene[which(results_table$PValue < 0.05 & results_table$FDR < 0.1)]
 
 print(length(upregulated_genes))
 print(length(downregulated_genes))
 ```
 
+*This code was modified from the lectures for BCB420: Computational Systems Biology [@isserlin_2025].*
 
 We have 78 differentially expressed upregulated genes and 155 differentially expressed downregulated genes.
-We will use GO: Biological Process. This is the most common dataset for enrichment analysis, since it helps us understand the biological functions and pathways that are significantly enriched in our gene set (https://pmc.ncbi.nlm.nih.gov/articles/PMC6607905/#:~:text=Gene%20Ontology%20(GO)57:%20GO%20provides%20a%20hierarchically,based%20on%20these%20terms%20for%20multiple%20species.&text=Most%20enrichment%20analysis%20methods%20make%20unrealistic%20assumptions,independence%20among%20genes%20as%20well%20as%20pathways.).
 
-## Overall Differential Expression Analysis
+We will use `gprofiler2` to perform thresholded over-representation analysis. We chose `gprofiler2` since it commonly used and contains the most up-to-date annotations, especially for Gene Ontology datasets since they are operated by the same people [@isserlin_2025]. For the annotation dataset, we will be using the most recent version of GO: Biological Process. This is the most common dataset for enrichment analysis, since it helps us understand the biological functions and pathways that are significantly enriched in our gene set [@go_2025; @reimand_2019]. Additionally, in the original paper the authors state that they used “GOBP_GRANULOCYTE_CHEMOTAXIS” and “GO_REGULATION_OF_NEUTROPHIL_MIGRATION” for their enrichment analysis, and GO: Biological Process best encompasses the two datasets [@bakker_2025]. We will also use the most recent version of Reactome for this analysis, since the authors conducted a Reactome pathway analysis on their proteomics data [@bakker_2025; @reactome_2019].
 
-We will begin by performing differential expression on the full list.
+---
+
+## Combined Differential Expression Analysis
+
+We will begin by performing differential expression on the full list of upregulated and downregulated genes.
+
 ```{r, message=FALSE, warning=FALSE}
+# declare query set
 query_set <- combined_genes
 
+# run gprofiler on the query set
 gprofiler_results <- gost(query = query_set ,
-                          significant=FALSE,
-                          ordered_query = FALSE,
-                          exclude_iea=TRUE,
-                          correction_method = "fdr",
-                          organism = "hsapiens",
-                          source = c("GO:BP"))
+                          significant=TRUE, # show only significant results
+                          ordered_query = FALSE, # our query is not ordered
+                          exclude_iea=TRUE, # exclude GO electronic annotations
+                          correction_method = "fdr", # correct with FDR
+                          organism = "hsapiens", # only return pathways in humans
+                          source = c("GO:BP", "REAC")) # query in GO: biological process
 
+# convert results into a dataframe
 combined_results <- as.data.frame(gprofiler_results$result)
-combined_results
+length(combined_results)
 ```
 
-We do not get any significant results when we include both sets. 
+*This code was modified from this Bioinformatics workshop tutorial [@isserlin_2024].*
 
-## Up-Regulated Differential Expression Analysis
+We do not get any significant results when we include both sets. This is unsurprising, since we expect that an enriched pathway will be enriched in one direction or the other.
 
-Let's see what happens when we perform our analysis on the upregulated and downregulated genes separately. We will begin with upregulated genes
+---
+
+## Upregulated Differential Expression Analysis
+
+Let's see what happens when we perform our analysis on the upregulated and downregulated genes separately. We will begin with upregulated genes.
 
 ```{r, message=FALSE, warning=FALSE}
+# declare query set
 query_set <- upregulated_genes
 
+# run gprofiler on the query set
 gprofiler_results <- gost(query = query_set ,
-                          significant=TRUE,
-                          ordered_query = FALSE,
-                          exclude_iea=TRUE,
-                          correction_method = "fdr",
-                          organism = "hsapiens",
-                          source = c("GO:BP"))
+                          significant=TRUE, # show only significant results
+                          ordered_query = FALSE, # our query is not ordered
+                          exclude_iea=TRUE, # exclude GO electronic annotations
+                          correction_method = "fdr", # correct with FDR
+                          organism = "hsapiens", # only return pathways in humans
+                          sources = c("GO:BP", "REAC")) # query in GO: biological process
 
-upregulated_results <- as.data.frame(gprofiler_results$result)
-upregulated_results
+# convert results into a dataframe and remove unnecessary rows
+upregulated_results <- as.data.frame(gprofiler_results$result) %>%
+  select(-query, -query_size, -recall, -significant, -effective_domain_size, -source_order, -parents)
+
+kable(upregulated_results, format = "html", caption = "Table 4: Over-representation analysis results for upregulated genes in TNBC samples.") %>%
+  kable_styling(bootstrap_options = "striped", full_width = FALSE) %>% # striped rows for readability, constrain width
+  scroll_box(height = "400px") # set the height of the box so it won't be too big
 ```
 
-For upregulated genes, the significant hits are defense response to fungus, response to fungus, positive regulation of blood coagulation, positive regulation of hemostasis, and positive regulation of coagulation.
+*This code was modified from this Bioinformatics workshop tutorial [@isserlin_2024].*
 
-One of the main groups of GO terms is response to fungus, which includes defense response to fungus and response to fungus (https://geneontology.org/). The other group of up-regulated genes are those concerned with regulation of blood clotting, which includes positive regulation of blood coagulation, positive regulation of hemostasis, and positive regulation of coagulation. These processes help control blood clotting, which is important for stopping bleeding and maintaining proper blood flow after an injury (https://geneontology.org/).
+There are 8 significant pathways in our upregulated genes, including defense response to fungus, response to fungus, positive regulation of blood coagulation, positive regulation of hemostasis, positive regulation of coagulation, neutrophil degranulation, innate immune system, and immune system.
 
-## Down-Regulated Differential Expression Analysis
+One of the main groups of GO terms is response to fungus, which includes defense response to fungus and response to fungus, which manage immune response to fungi. The other group of upregulated genes are those concerned with regulation of blood clotting, which includes positive regulation of blood coagulation, positive regulation of hemostasis, and positive regulation of coagulation. These processes help control blood clotting, which is important for stopping bleeding and maintaining proper blood flow after an injury.
 
-Now let's try with the down-regulated genes
+In the Reactome analysis, our top hits are for neutrophil degranulation, innate immune system, and immune system, which all deal with the neutrophil's immune response.
+
+---
+
+## Downregulated Differential Expression Analysis
+
+Now let's run `gprofiler2` with the downregulated genes.
 
 ```{r, message=FALSE, warning=FALSE}
+# declare query set
 query_set <- downregulated_genes
 
+# run gprofiler on the query set
 gprofiler_results <- gost(query = query_set ,
-                          significant=TRUE,
-                          ordered_query = FALSE,
-                          exclude_iea=TRUE,
-                          correction_method = "fdr",
-                          organism = "hsapiens",
-                          source = c("GO:BP"))
+                          significant=TRUE, # show only significant results
+                          ordered_query = FALSE, # our query is not ordered
+                          exclude_iea=TRUE, # exclude GO electronic annotations
+                          correction_method = "fdr", # correct with FDR
+                          organism = "hsapiens", # only return pathways in humans
+                          source = c("GO:BP", "REAC")) # query in GO: biological process
 
-downregulated_results <- as.data.frame(gprofiler_results$result)
-downregulated_results
+# convert results into a dataframe and remove unnecessary rows
+downregulated_results <- as.data.frame(gprofiler_results$result) %>%
+  select(-query, -query_size, -recall, -significant, -effective_domain_size, -source_order, -parents)
+
+kable(downregulated_results, format = "html", caption = "Table 5: Over-representation analysis results for downregulated genes in TNBC samples.") %>%
+  kable_styling(bootstrap_options = "striped", full_width = FALSE) %>% # striped rows for readability, constrain width
+  scroll_box(height = "400px") # set the height of the box so it won't be too big
 ```
 
+*This code was modified from this Bioinformatics workshop tutorial [@isserlin_2024].*
 
-The most common pathways here are macromolecule metabolic process, mitochondrial translation, mitochondrial gene expression, eosinophil migration, chemokine-mediated signaling pathway, eosinophil chemotaxis, macromolecule biosynthetic process	, response to chemokine, cellular response to chemokine, gene expression (https://geneontology.org/).
+There are 14 significant pathways for downregulated genes, including macromolecule metabolic process, mitochondrial translation, mitochondrial gene expression, eosinophil migration, chemokine-mediated signaling pathway, eosinophil chemotaxis, macromolecule biosynthetic process, response to chemokine, cellular response to chemokine, gene expression, mitochondrial translation elongation, mitochondrial translation initiation, mitochondrial translation termination, and mitochondrial translation.
 
-One of the main groups here is mitochondrial pathways, including mitochondrial translation and mitochondrial gene expression, which are important for making proteins inside mitochondria, which help cells produce energy. The macromolecule metabolism Pathway, including macromolecule metabolic process and macromolecule biosynthetic process is down-regulated, and involves the synthesis and breakdown of large molecules in cells (https://geneontology.org/). Another pathways is eosinophil migration, which involves eosinophil migration, chemokine-mediated signaling pathway, eosinophil chemotaxis, response to chemokine, and cellular response to chemokine (https://geneontology.org/). Eosinophil's are immune cells involved in allergic reactions, asthma, and parasitic infections (https://my.clevelandclinic.org/health/body/23402-eosinophils). The chemokine signaling pathway regulates their migration, which is important in inflammation and immune defense (https://pmc.ncbi.nlm.nih.gov/articles/PMC4225839/#:~:text=CCL11/eotaxin%20is%20an%20important,during%20allergic%20responses%20(142).). The gene expression pathway is also down-regulated, which is a large group of genes that direct and execute the conversion of genetic information into proteins (https://geneontology.org/).
+One of the main groups of GO terms is mitochondrial pathways, including mitochondrial translation and mitochondrial gene expression, which are important for making proteins inside mitochondria, which help cells produce energy. The macromolecule metabolism pathway, including macromolecule metabolic process and macromolecule biosynthetic process is downregulated, and involves the synthesis and breakdown of large molecules in cells. Another pathways is eosinophil migration, which involves eosinophil migration, chemokine-mediated signaling pathway, eosinophil chemotaxis, response to chemokine, and cellular response to chemokine. The gene expression pathway is also downregulated, which is a large group of genes that direct and execute the conversion of genetic information into proteins.
 
+The main group of Reactome pathways deal with mitochondrial translation, including mitochondrial translation elongation, mitochondrial translation initiation, mitochondrial translation termination, and mitochondrial translation.
+
+---
 
 ## FDR-Corrected Gene Differential Expression Analysis
 
+Finally, let's look at the 13 genes that pass BH correction. Since there is such a small set, we will query every available database to see if we get any significant results.
+
 ```{r, message=FALSE, warning=FALSE}
+# declare query set
 query_set <- top_genes
 
+# run gprofiler on the query set
 gprofiler_results <- gost(query = query_set ,
-                          significant=FALSE,
-                          ordered_query = FALSE,
-                          exclude_iea=TRUE,
-                          correction_method = "fdr",
-                          organism = "hsapiens",
-                          source = c("GO:BP"))
+                          significant=TRUE, # show all results even if not significant
+                          ordered_query = FALSE, # our query is not ordered
+                          exclude_iea=TRUE, # exclude GO electronic annotations
+                          correction_method = "fdr", # correct with FDR
+                          organism = "hsapiens", # only return pathways in humans
+                          source = c("GO", "KEGG", "REAC", "TF", "MIRNA", "CORUM", "HP", "HPA", "WP")) # query in all annotation sets
 
-top_results <- as.data.frame(gprofiler_results$result)
-top_results
+# convert results into a dataframe and remove unnecessary rows
+top_results <- as.data.frame(gprofiler_results$result) %>%
+  select(-query, -query_size, -recall, -significant, -effective_domain_size, -source_order, -parents)
+
+kable(top_results, format = "html", caption = "Table 6: Over-representation analysis results for significant differential expression genes that passed BH correction in TNBC samples.") %>%
+  kable_styling(bootstrap_options = "striped", full_width = FALSE) %>% # striped rows for readability, constrain width
+  scroll_box(height = "400px") # set the height of the box so it won't be too big
 ```
 
-Our top expressed genes all belong to different groups, so there is no significant pathway between them.
+We get many significant hits, however, their intersection size (the number of genes from our group) is only 1 and the term size (number of genes in the pathway) is very small, meaning that the pathway only appears significant because it is a small group of genes. It appears that our top expressed genes all belong to different groups, so there is no significant pathway that they share.
 
-TODO: code inspired by https://risserlin.github.io/CBW_pathways_workshop_R_notebooks/run-gprofiler-from-r.html for all gprofiler runs.
-
+---
 
 # Discussion
 
-In the original paper, the authors state that they performed Gene Set Enrichment Analysis (GSEA) and found that genes in mTNBC were enriched for genes involved in cell migration. We can see that too in our Down-Regulated Gene Enrichment Analysis, where genes assossciated with eosinophil migration are down-regulated in TNBC patients. 
+In the original paper, the authors performed Gene Set Enrichment Analysis (GSEA) and found that genes in mTNBC were enriched for genes involved in cell migration. We can see that in our analysis as well, where genes associated with eosinophil migration are downregulated in TNBC patients. Eosinophil's are immune cells involved in allergic reactions, asthma, and parasitic infections [@clevelandclinic_2022]. The chemokine signaling pathway regulates their migration, which is important in inflammation and immune defense [@davoine_2014].
+
+The authors also indicate that they found enrichment for neutrophil granule proteins. Neutrophil granule proteins play a major role in host defense, autoimmunity, inflammation, and cancer progression [@othman_2021]. In our upregulated gene set, we have enrichment for the neutrophil degranulation pathway, as well as immune system and innate immune system pathways. We also see some enriched pathways dealing with immunity including response to fungi and blood clotting in our upregulated set, which also deal with immune response. Additionally, `PGLYRP1` and `C3AR1`, two of the differentially expressed genes that passed correction, are involved in immune response and are upregulated in TNBC samples [@ncbi_2019].
+
+While not specified in the paper, we found that mitochondrial translation pathways are downregulated, including elongation, translation, and termination. Additionally, `TSPO`, one of our top differentially expressed genes that passed correction, is a translocator protein responsible for moving transcripts into the mitochondria and is upregulated in TNBC samples [@ncbi_2019]. The abnormal production of mitochondrial translation components has been linked to many different cancers including breast cancer [@koc_2022]. Additionally, down-regulation of mitochondrial translation has already been linked to cancer, further validating our analysis [@wang_2021].
+
+---
+
+# Conclusion
+
+In this analysis, we conducted a differential gene expression  and over-representation analysis on the gene set from Bakker et. al's work. We find that our results align with the findings of the paper, that neutrophils in TNBC patients are enriched for pathways involving cell migration and neutrophil granule proteins. We also find that TNBC samples had a down-regulation of mitochondrial translation proteins, which has been linked to breast cancer by other works. 
+
+---
+
+# Question Key
+
+The following contains a guide to the discussion questions for A2. Clicking on the question links back to the section where the analysis was performed.
+
+**Differential Gene Expression:**
+
+[**Calculate p-values for each of the genes in your expression set. How many genes were significantly differentially expressed? What thresholds did you use and why?**](#differential-gene-expression)
+
+[**Multiple hypothesis testing - correct your p-values using a multiple hypothesis correction method. Which method did you use? And Why? How many genes passed correction?**](#multiple-hypothesis-testing)
+
+[**Show the amount of differentially expressed genes using an MA Plot or a Volcano plot. Highlight genes of interest.**](#volcano-plot)
+
+[**Visualize your top hits using a heatmap. Do you conditions cluster together? Explain why or why not.**](#heatmap)
+
+**Over-Representation Analysis:**
+
+[**Which method did you choose and why?**](#over-representation-analysis)
+
+[**What annotation data did you use and why? What version of the annotation are you using?**](#over-representation-analysis)
+
+[**How many genesets were returned with what thresholds?**](#over-representation-analysis)
+
+[**Run the analysis using the up-regulated set of genes, and the down-regulated set of genes separately. How do these results compare to using the whole list (i.e all differentially expressed genes together vs. the up-regulated and down regulated differentially expressed genes separately)?**](#combined-differential-expression-analysis)
+
+**Interpretation:**
+
+[**Do the over-representation results support conclusions or mechanism discussed in the original paper?**](#discussion)
+
+[**Can you find evidence, i.e. publications, to support some of the results that you see. How does this evidence support your results.**](#discussion)
+
+---
+
+# References
+
+
 
