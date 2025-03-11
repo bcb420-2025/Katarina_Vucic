@@ -6,3 +6,4 @@ Hi there! My name is Katarina Vucic, and I am a fourth-year undergraduate studen
 
 ## 💻 View my Assignments
 * [Assignment 1](A1_KatarinaVucic.html)
+* [Assignment 2](A2_KatarinaVucic.html)
