@@ -41,12 +41,12 @@ For our [third analysis](#dataset-pathway-and-network-analysis), we will conduct
 ---
 
 # Data Cleaning and Processing of Bulk RNA-Sequencing Data
-The first analysis can be found [here](A1_KatarinaVucic.html).
+The first analysis can be found [here](https://github.com/bcb420-2025/Katarina_Vucic/blob/main/A1_KatarinaVucic.html).
 
 ---
 
 # Differential Gene Expression and Preliminary Over-Representation Analysis
-The second analysis can be found [here](A2_KatarinaVucic.html).
+The second analysis can be found [here](https://github.com/bcb420-2025/Katarina_Vucic/blob/main/A2_KatarinaVucic.html).
 
 ---
 
@@ -223,7 +223,7 @@ if(run_gsea){
 
 ## Results
 
-Now that we have run our analysis, we have an HTML file in the results file that we can look at. The pre-generated one can be found [here](~/projects/GSEA_results/TNBC_vs_Healthy.GseaPreranked.1743375480688) and is displayed below. 
+Now that we have run our analysis, we have an HTML file in the results file that we can look at. The pre-generated one can be found [here](https://github.com/bcb420-2025/Katarina_Vucic/blob/main/GSEA_results/TNBC_vs_Healthy.GseaPreranked.1743375480688/index.html) and is displayed below. 
 ```{r, message=FALSE, warning=FALSE}
 
 gsea_directories <- list.files(path = output_dir, pattern = "\\.GseaPreranked")
